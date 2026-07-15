@@ -1,0 +1,49 @@
+# Example job specification for `ucloud jobs create examples/pytorch.toml`.
+#
+# This mirrors UCloud's JobSpecification 1:1. Replace every placeholder below
+# with the real values for your project. The easiest way to discover the exact
+# `application.version` and `product` for the PyTorch app is to open the create
+# page in the GUI once (https://cloud.sdu.dk/app/jobs/create?app=pytorch-te)
+# with the browser DevTools "Network" tab open, start a job, and copy the values
+# from the outgoing POST /api/jobs request body.
+#
+# NOTE: In TOML, all top-level scalar keys must appear before any [table].
+
+name = "pytorch-demo"          # optional, free-form job name
+replicas = 1
+ssh_enabled = true              # required for `ucloud jobs ssh` to work
+
+[application]
+name = "pytorch-te"
+version = "REPLACE_ME"          # e.g. "2.3.0" — copy from the GUI request
+
+[product]
+id = "REPLACE_ME"               # e.g. "u1-gpu-1"
+category = "REPLACE_ME"         # e.g. "u1-gpu"
+provider = "ucloud"
+
+[time_allocation]
+hours = 4
+minutes = 0
+seconds = 0
+
+# --- Application parameters -------------------------------------------------
+# Each entry is a tagged AppParameterValue. Common types: text, textarea,
+# boolean, integer, floating_point, file (a mount from your UCloud drive).
+
+# A directory from your UCloud drive mounted into the job:
+# [parameters.workingDirectory]
+# type = "file"
+# path = "/1234567/my-project"
+# read_only = false
+
+# A plain text parameter the app exposes:
+# [parameters.someOption]
+# type = "text"
+# value = "hello"
+
+# --- Extra resources (optional) --------------------------------------------
+# resources is a list of AppParameterValue entries (public links, networks, ...).
+# [[resources]]
+# type = "ingress"
+# id = "my-public-link-id"

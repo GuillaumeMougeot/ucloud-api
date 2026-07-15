@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# uv: the lockfile IS committed for reproducible installs (this is a CLI app).
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local secrets / config
+.env
+*.credentials.json
+credentials.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
