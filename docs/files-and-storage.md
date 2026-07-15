@@ -84,6 +84,21 @@ uv run ucloud files rm /12347837/oldstuff        # moves to trash (asks first; -
     files concurrently rather than using threads/processes — that's where large
     datasets (thousands of files) get their speed.
 
+## Interactive browsing
+
+Prefer to poke around? Open an interactive shell with `cd`/`ls` and **tab
+completion** of remote paths:
+
+```bash
+uv run ucloud files shell            # starts at root, which lists your drives
+# ucloud:/$ cd 12347837
+# ucloud:/12347837$ ls
+# ucloud:/12347837$ cd dat<TAB>      # completes to datasets/
+# ucloud:/12347837/datasets$ get results.csv ./results.csv
+```
+
+Commands: `ls`, `cd`, `pwd`, `get`, `put`, `mkdir`, `rm`, `help`, `exit`.
+
 ## Mount a folder into a job
 
 In the GUI you attach folders on the job-create page. With `ucloud-api` you do

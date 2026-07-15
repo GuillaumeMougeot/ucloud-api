@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import tomllib
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
@@ -25,11 +27,12 @@ from .auth import Authenticator
 from .catalog import Catalog
 from .client import UCloudClient
 from .config import DEFAULT_BASE_URL, Credentials, credentials_path, load_credentials
-from .exceptions import UCloudError
+from .exceptions import APIError, UCloudError
 from .files import Files
 from .jobs import Jobs, SSHKeys, specification_to_spec_dict
 from .models import JobSpecification, JobState
 from .params import file as file_param
+from .shell import FilesShell
 from .ssh import SSHRunner
 from .transfer import DEFAULT_CHUNK_SIZE, DEFAULT_CONCURRENCY, Transfer
 
@@ -65,6 +68,20 @@ def _client() -> UCloudClient:
     try:
         return UCloudClient()
     except UCloudError as exc:
+        _fail(str(exc))
+
+
+@contextlib.contextmanager
+def _friendly_errors() -> Iterator[None]:
+    """Turn raw file-API errors into a helpful message (esp. the misleading 403)."""
+    try:
+        yield
+    except APIError as exc:
+        if exc.status_code in (403, 404):
+            _fail(
+                "Path not found or not accessible. Check the path, and that your active "
+                "project is correct (`ucloud projects`) — project drives need the right project."
+            )
         _fail(str(exc))
 
 
@@ -370,7 +387,7 @@ def apps_show(
 @files_app.command("drives")
 def files_drives() -> None:
     """List the drives (file collections) you can access."""
-    with _client() as client:
+    with _client() as client, _friendly_errors():
         drives = Files(client).list_drives()
     if not drives:
         console.print("[yellow]No drives found.[/]")
@@ -387,7 +404,7 @@ def files_ls(
     path: Annotated[str, typer.Argument(help="Path to list, e.g. /12345/project.")],
 ) -> None:
     """List the contents of a UCloud folder."""
-    with _client() as client:
+    with _client() as client, _friendly_errors():
         entries = Files(client).list_path(path)
     if not entries:
         console.print(f"[yellow]Empty or not found:[/] {path}")
@@ -430,7 +447,7 @@ def files_upload(
     ] = True,
 ) -> None:
     """Upload a file or directory to UCloud (many files in parallel)."""
-    with _client() as client, _transfer_progress() as prog:
+    with _client() as client, _friendly_errors(), _transfer_progress() as prog:
         task = prog.add_task("upload", total=None, start=False)
 
         def on_start(count: int, total: int) -> None:
@@ -460,7 +477,7 @@ def files_download(
     ] = DEFAULT_CONCURRENCY,
 ) -> None:
     """Download a file or directory from UCloud (many files in parallel)."""
-    with _client() as client, _transfer_progress() as prog:
+    with _client() as client, _friendly_errors(), _transfer_progress() as prog:
         task = prog.add_task("download", total=None, start=False)
 
         def on_start(count: int, total: int) -> None:
@@ -484,7 +501,7 @@ def files_mkdir(
     path: Annotated[str, typer.Argument(help="Folder to create, e.g. /959294/newdir.")],
 ) -> None:
     """Create a folder on UCloud."""
-    with _client() as client:
+    with _client() as client, _friendly_errors():
         Files(client).mkdir(path)
     console.print(f"[green]Created[/] {path}")
 
@@ -497,9 +514,20 @@ def files_rm(
     """Move a file or folder to the UCloud trash."""
     if not yes and not typer.confirm(f"Move {path} to trash?"):
         raise typer.Abort
-    with _client() as client:
+    with _client() as client, _friendly_errors():
         Files(client).trash(path)
     console.print(f"[green]Moved to trash:[/] {path}")
+
+
+@files_app.command("shell")
+def files_shell(
+    start: Annotated[
+        str, typer.Argument(help="Directory to start in (default: root, which lists drives).")
+    ] = "/",
+) -> None:
+    """Open an interactive browser: cd / ls / get / put with tab-completion."""
+    with _client() as client:
+        FilesShell(client, start=start).run()
 
 
 @app.command()
@@ -509,10 +537,14 @@ def projects() -> None:
         data = client.get("/api/projects/v2/browse", params={"itemsPerPage": 250})
         active = client.project
     items = data.get("items", []) if isinstance(data, dict) else []
-    if not items:
-        console.print("[yellow]No projects found.[/] You may be working in your personal space.")
-        return
     table = Table("Active", "ID", "Title")
+    # "My workspace" (personal) is the default when no project is set — it is not
+    # returned by the projects API, so we add it explicitly to make it visible.
+    table.add_row(
+        "[green]*[/]" if not active else "",
+        "[dim](none)[/]",
+        "My workspace (personal — usually no GPU/storage allocation)",
+    )
     for it in items:
         pid = str(it.get("id", "?"))
         table.add_row(
@@ -522,8 +554,8 @@ def projects() -> None:
         )
     console.print(table)
     console.print(
-        "\nSet your active project with: [bold]ucloud login --project <ID>[/] "
-        "(or set UCLOUD_PROJECT in .env)."
+        "\nSwitch project with: [bold]ucloud login --project <ID>[/] "
+        "(or set UCLOUD_PROJECT in .env). Leave unset to stay in My workspace."
     )
 
 

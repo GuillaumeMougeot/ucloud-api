@@ -168,3 +168,9 @@ Create a folder on UCloud.
 ## `ucloud files rm <path>`
 
 Move a file or folder to the trash (asks for confirmation; `-y` to skip).
+
+## `ucloud files shell [start]`
+
+Open an interactive browser with `cd` / `ls` / `pwd` / `get` / `put` / `mkdir` /
+`rm` and **tab-completion** of remote paths. Starts at the root (which lists your
+drives) unless you pass a starting path.
