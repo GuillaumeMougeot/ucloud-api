@@ -67,19 +67,21 @@ class RemotePathCompleter(Completer):
         # Only complete the path argument, not the command word itself.
         if " " not in text:
             return
+        # `cd` only makes sense for directories; other commands accept files too.
+        dirs_only = text.split(None, 1)[0] == "cd"
         partial = "" if text.endswith(" ") else text.rsplit(None, 1)[-1]
         head, _, prefix = partial.rpartition("/")
         if partial.startswith("/"):
             dirpath = resolve_path("/", head) if head else "/"
         else:
             dirpath = resolve_path(self._cwd(), head) if head else self._cwd()
+        prefix_lower = prefix.lower()  # case-insensitive so `tr` finds `Trash/`
         for name, is_dir in self._entries(dirpath):
-            if name.startswith(prefix):
-                yield Completion(
-                    name + ("/" if is_dir else ""),
-                    start_position=-len(prefix),
-                    display=name + ("/" if is_dir else ""),
-                )
+            if dirs_only and not is_dir:
+                continue
+            if name.lower().startswith(prefix_lower):
+                completion = name + ("/" if is_dir else "")
+                yield Completion(completion, start_position=-len(prefix), display=completion)
 
 
 class FilesShell:

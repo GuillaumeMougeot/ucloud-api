@@ -59,3 +59,20 @@ def test_completer_ignores_command_word() -> None:
     completer = RemotePathCompleter(_FakeFiles(), lambda: "/12347837")  # type: ignore[arg-type]
     # No space yet -> completing the command, not a path.
     assert _completions(completer, "ls") == []
+
+
+def test_completer_is_case_insensitive() -> None:
+    completer = RemotePathCompleter(_FakeFiles(), lambda: "/12347837")  # type: ignore[arg-type]
+    assert "dataset/" in _completions(completer, "cd DA")
+
+
+def test_cd_completes_directories_only() -> None:
+    completer = RemotePathCompleter(_FakeFiles(), lambda: "/12347837")  # type: ignore[arg-type]
+    assert _completions(completer, "cd ") == ["dataset/"]
+
+
+def test_get_completes_files_and_directories() -> None:
+    completer = RemotePathCompleter(_FakeFiles(), lambda: "/12347837")  # type: ignore[arg-type]
+    comps = _completions(completer, "get ")
+    assert "dataset/" in comps
+    assert "notes.md" in comps
