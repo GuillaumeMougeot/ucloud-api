@@ -3,9 +3,17 @@
 Launch and control GPU jobs on **[UCloud](https://cloud.sdu.dk)** (the SDU
 eScience Center platform in Denmark) from a terminal — no web GUI required.
 
+[![CI](https://github.com/GuillaumeMougeot/ucloud-api/actions/workflows/ci.yml/badge.svg)](https://github.com/GuillaumeMougeot/ucloud-api/actions/workflows/ci.yml)
+[![Docs](https://github.com/GuillaumeMougeot/ucloud-api/actions/workflows/docs.yml/badge.svg)](https://guillaumemougeot.github.io/ucloud-api/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![uv](https://img.shields.io/badge/managed%20with-uv-de5fe9)](https://docs.astral.sh/uv/)
+
 UCloud's web app is just a single-page frontend over a fully documented REST
 API. This project talks to that API directly, so you can start a job, wait for
 it to run, and `ssh` into it from a headless server, a script, or CI.
+
+![Demo terminal session](docs/assets/demo.svg)
 
 > ⚠️ **Unofficial.** Not affiliated with SDU eScience Center. It uses the same
 > public API the web frontend uses. This is a different platform from the
@@ -125,6 +133,29 @@ uv run ucloud jobs ssh xxxx                      # interactive shell
 uv run ucloud jobs ssh xxxx -c "nvidia-smi"      # one-off command
 ```
 
+### Browse files and mount folders into a job
+
+UCloud storage lives on **drives** (paths look like `/<driveId>/folder`). Browse
+them, then mount a folder into a job — the CLI equivalent of attaching folders on
+the GUI's create page:
+
+```bash
+uv run ucloud files drives                 # -> e.g. /959294  Home
+uv run ucloud files ls /959294             # list a folder
+uv run ucloud jobs create my-job.toml -m /959294/project        # mount it
+uv run ucloud jobs create my-job.toml -m /959294/data -m /959294/ref:ro
+```
+
+`-m/--mount` is repeatable; add `:ro` for read-only. See
+[Files and storage](docs/files-and-storage.md) for the details (and how to
+declare mounts inside the spec file instead).
+
+### Inspect an application's parameters
+
+```bash
+uv run ucloud apps show pytorch-te 26.05   # which params it needs + their types
+```
+
 ### Manage jobs
 
 ```bash
@@ -163,6 +194,8 @@ with UCloudClient() as client:
 | Terminate   | `POST /api/jobs/terminate`                                 |
 | SSH keys    | `POST /api/ssh`                                            |
 | App search  | `POST /api/hpc/apps/search`                                |
+| App params  | `GET /api/hpc/apps/byNameAndVersion`                       |
+| Drives/files| `GET /api/files/collections/browse`, `GET /api/files/browse` |
 | Products    | `GET /api/jobs/retrieveProducts`                           |
 
 ## Status & caveats

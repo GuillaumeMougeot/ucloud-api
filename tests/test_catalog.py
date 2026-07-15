@@ -67,6 +67,23 @@ def test_search_apps_reads_metadata() -> None:
     assert results[0].version == "2.3.0"
 
 
+def test_app_parameters_parse_and_map_spec_type() -> None:
+    payload = {
+        "invocation": {
+            "parameters": [
+                {"name": "initScript", "type": "input_file", "optional": True, "title": "Init"},
+                {"name": "count", "type": "integer", "optional": False, "title": "Count"},
+                {"name": "mode", "type": "enumeration", "optional": True, "title": "Mode"},
+            ]
+        }
+    }
+    params_ = Catalog(_FakeClient(payload)).app_parameters("pytorch-te", "26.05")  # type: ignore[arg-type]
+    assert params_[0].spec_type == "file"  # input_file -> file
+    assert params_[1].spec_type == "integer"
+    assert params_[1].optional is False
+    assert params_[2].spec_type == "text"  # enumeration -> text
+
+
 def test_spec_export_roundtrips_to_toml_and_back() -> None:
     job = {
         "id": "123",

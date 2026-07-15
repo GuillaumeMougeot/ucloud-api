@@ -31,7 +31,8 @@ web frontend uses. Nothing is scraped or automated through a browser.
 | `auth.py` | Exchange a refresh token for access tokens; cache until JWT `exp`. |
 | `client.py` | Authenticated `httpx` wrapper; injects the bearer token, retries once on `401`. |
 | `jobs.py` | Create / retrieve / wait / terminate jobs; parse the SSH endpoint; export a job to a spec. |
-| `catalog.py` | Search apps; list compute products. |
+| `catalog.py` | Search apps; list app parameters; list compute products. |
+| `files.py` | Browse drives and folders. |
 | `models.py` | Typed `JobSpecification` and the `AppParameterValue` union (serialize to camelCase). |
 | `params.py` | Ergonomic factories for parameter values. |
 | `ssh.py` | Run commands / open a shell on a job via the system `ssh`. |
@@ -48,8 +49,11 @@ web frontend uses. Nothing is scraped or automated through a browser.
 | Terminate | `POST /api/jobs/terminate` |
 | SSH endpoint | parsed from the `ssh … -p <port>` line in the job's updates |
 | App search | `POST /api/hpc/apps/search` |
+| App parameters | `GET /api/hpc/apps/byNameAndVersion` |
 | Products | `GET /api/jobs/retrieveProducts` |
 | SSH keys | `POST /api/ssh` (create), `GET /api/ssh/browse` (list) |
+| Drives | `GET /api/files/collections/browse` |
+| Files | `GET /api/files/browse?path=…` |
 
 ## The access-token lifecycle
 

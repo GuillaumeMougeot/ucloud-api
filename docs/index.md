@@ -33,6 +33,7 @@ any laptop), copy that string to your server, and from then on everything is API
 | Launch my first GPU job end to end | [Tutorial 1: your first GPU job](tutorials/01-first-gpu-job.md) |
 | Re-run a job I already started in the GUI | [Tutorial 2: from an existing job](tutorials/02-from-existing-job.md) |
 | Automate jobs from Python | [Tutorial 3: the Python library](tutorials/03-python-library.md) |
+| Browse files and mount folders into jobs | [Files and storage](files-and-storage.md) |
 | Look up a command | [CLI reference](cli-reference.md) |
 | Configure tokens / env vars | [Configuration](configuration.md) |
 | Understand what it does under the hood | [How it works](how-it-works.md) |

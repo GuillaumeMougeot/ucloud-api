@@ -17,6 +17,7 @@ ucloud --help
 | `ucloud jobs …` | Create, inspect and connect to jobs |
 | `ucloud ssh-keys …` | Manage SSH public keys |
 | `ucloud apps …` | Discover applications |
+| `ucloud files …` | Browse drives and folders |
 
 ## `ucloud login`
 
@@ -51,6 +52,15 @@ uv run ucloud apps search pytorch
 uv run ucloud apps search jupyter --limit 50
 ```
 
+## `ucloud apps show <name> <version>`
+
+Show the parameters an application accepts, including which are required and the
+spec `type` to use for each.
+
+```bash
+uv run ucloud apps show pytorch-te 26.05
+```
+
 ## `ucloud jobs create`
 
 Submit a job from a TOML spec file.
@@ -60,10 +70,13 @@ uv run ucloud jobs create my-job.toml               # waits for RUNNING by defau
 uv run ucloud jobs create my-job.toml --no-wait     # return immediately
 uv run ucloud jobs create my-job.toml --timeout 1800
 uv run ucloud jobs create my-job.toml --no-ssh      # don't print the SSH command
+uv run ucloud jobs create my-job.toml -m /959294/data          # mount a folder
+uv run ucloud jobs create my-job.toml -m /959294/ref:ro        # read-only mount
 ```
 
-See [Configuration → spec file format](configuration.md#job-spec-files) for the
-TOML schema.
+`--mount` / `-m` is repeatable; append `:ro` for read-only. See
+[Files and storage](files-and-storage.md). For the TOML schema see
+[Configuration → spec file format](configuration.md#job-spec-files).
 
 ## `ucloud jobs list`
 
@@ -107,3 +120,16 @@ uv run ucloud ssh-keys add ~/.ssh/id_ed25519.pub --title my-laptop
 ## `ucloud ssh-keys list`
 
 List registered SSH public keys.
+
+## `ucloud files drives`
+
+List the drives (file collections) you can access, with the path to browse each.
+
+## `ucloud files ls <path>`
+
+List the contents of a UCloud folder.
+
+```bash
+uv run ucloud files ls /959294
+uv run ucloud files ls /959294/project
+```

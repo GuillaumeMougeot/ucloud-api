@@ -24,6 +24,41 @@ class AppSummary:
 
 
 @dataclass(slots=True)
+class AppParameter:
+    """A single parameter an application accepts."""
+
+    name: str
+    type: str
+    optional: bool
+    title: str
+    description: str
+    default: Any
+
+    @property
+    def spec_type(self) -> str:
+        """The AppParameterValue ``type`` to use for this parameter in a spec."""
+        return _APP_PARAM_TO_SPEC_TYPE.get(self.type, "text")
+
+
+#: Maps an application-parameter type (from the catalog) to the tagged
+#: AppParameterValue ``type`` you write in a spec file.
+_APP_PARAM_TO_SPEC_TYPE = {
+    "input_file": "file",
+    "input_directory": "file",
+    "text": "text",
+    "textarea": "textarea",
+    "integer": "integer",
+    "floating_point": "floating_point",
+    "boolean": "boolean",
+    "enumeration": "text",
+    "peer": "peer",
+    "ingress": "ingress",
+    "license_server": "license_server",
+    "network_ip": "network",
+}
+
+
+@dataclass(slots=True)
 class ComputeProductInfo:
     """A product plus the fields needed to reference it in a job spec."""
 
@@ -55,6 +90,32 @@ class Catalog:
                     version=str(meta.get("version", "?")),
                     title=str(meta.get("title", "")),
                     description=str(meta.get("description", "")),
+                )
+            )
+        return results
+
+    def app_parameters(self, name: str, version: str) -> list[AppParameter]:
+        """List the parameters an application accepts.
+
+        GET /api/hpc/apps/byNameAndVersion; parameters live under
+        ``invocation.parameters``.
+        """
+        data = self._client.get(
+            f"{_APPS_BASE}/byNameAndVersion",
+            params={"appName": name, "appVersion": version},
+        )
+        invocation = data.get("invocation", {}) if isinstance(data, dict) else {}
+        params = invocation.get("parameters", []) or []
+        results: list[AppParameter] = []
+        for p in params:
+            results.append(
+                AppParameter(
+                    name=str(p.get("name", "?")),
+                    type=str(p.get("type", "?")),
+                    optional=bool(p.get("optional", False)),
+                    title=str(p.get("title", "") or ""),
+                    description=str(p.get("description", "") or ""),
+                    default=p.get("defaultValue"),
                 )
             )
         return results

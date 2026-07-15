@@ -19,8 +19,10 @@ from .catalog import Catalog
 from .client import UCloudClient
 from .config import DEFAULT_BASE_URL, Credentials, credentials_path, load_credentials
 from .exceptions import UCloudError
+from .files import Files
 from .jobs import Jobs, SSHKeys, specification_to_spec_dict
 from .models import JobSpecification, JobState
+from .params import file as file_param
 from .ssh import SSHRunner
 
 # Load a local .env (searching from the cwd upward) so UCLOUD_* variables are
@@ -36,9 +38,11 @@ app = typer.Typer(
 jobs_app = typer.Typer(help="Create, inspect and connect to jobs.", no_args_is_help=True)
 keys_app = typer.Typer(help="Manage SSH public keys.", no_args_is_help=True)
 apps_app = typer.Typer(help="Discover applications in the catalog.", no_args_is_help=True)
+files_app = typer.Typer(help="Browse UCloud drives and files.", no_args_is_help=True)
 app.add_typer(jobs_app, name="jobs")
 app.add_typer(keys_app, name="ssh-keys")
 app.add_typer(apps_app, name="apps")
+app.add_typer(files_app, name="files")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -139,9 +143,19 @@ def jobs_create(
     show_ssh: Annotated[
         bool, typer.Option("--ssh/--no-ssh", help="Print the SSH command once running.")
     ] = True,
+    mount: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--mount",
+            "-m",
+            help="Mount a UCloud folder into the job, e.g. -m /12345/data. "
+            "Append ':ro' for read-only. Repeatable.",
+        ),
+    ] = None,
 ) -> None:
     """Submit a job described by a TOML spec file."""
     spec = _load_spec(spec_file)
+    _apply_mounts(spec, mount or [])
     with _client() as client:
         jobs = Jobs(client)
         job_id = jobs.create(spec)
@@ -311,6 +325,69 @@ def apps_search(
     console.print(table)
 
 
+@apps_app.command("show")
+def apps_show(
+    name: Annotated[str, typer.Argument(help="Application name, e.g. pytorch-te.")],
+    version: Annotated[str, typer.Argument(help="Application version, e.g. 26.05.")],
+) -> None:
+    """Show the parameters an application accepts (to build a spec)."""
+    with _client() as client:
+        parameters = Catalog(client).app_parameters(name, version)
+    if not parameters:
+        console.print(f"[yellow]No parameters found[/] for {name}@{version}.")
+        return
+    table = Table("Parameter", "Required", "Spec type", "Title")
+    for p in parameters:
+        table.add_row(
+            p.name,
+            "[red]yes[/]" if not p.optional else "no",
+            p.spec_type,
+            p.title,
+        )
+    console.print(table)
+    console.print(
+        "\nUse [bold]spec type[/] as the parameter's `type` in your TOML "
+        "(e.g. a 'file' spec type -> a [parameters.NAME] table with type='file', path='/…')."
+    )
+
+
+@files_app.command("drives")
+def files_drives() -> None:
+    """List the drives (file collections) you can access."""
+    with _client() as client:
+        drives = Files(client).list_drives()
+    if not drives:
+        console.print("[yellow]No drives found.[/]")
+        return
+    table = Table("Path", "Title", "Provider")
+    for d in drives:
+        table.add_row(d.path, d.title, d.provider)
+    console.print(table)
+    console.print("\nBrowse one with: [bold]ucloud files ls <path>[/]")
+
+
+@files_app.command("ls")
+def files_ls(
+    path: Annotated[str, typer.Argument(help="Path to list, e.g. /12345/project.")],
+) -> None:
+    """List the contents of a UCloud folder."""
+    with _client() as client:
+        entries = Files(client).list_path(path)
+    if not entries:
+        console.print(f"[yellow]Empty or not found:[/] {path}")
+        return
+    table = Table("Type", "Name", "Size", "Modified")
+    for e in entries:
+        table.add_row(
+            "dir" if e.is_dir else "file",
+            e.name + ("/" if e.is_dir else ""),
+            _format_size(e.size) if not e.is_dir else "",
+            _format_timestamp(e.modified_at),
+        )
+    console.print(table)
+    console.print(f"\nMount a folder into a job with: [bold]jobs create spec.toml -m {path}[/]")
+
+
 @app.command()
 def products(
     provider: Annotated[
@@ -341,6 +418,36 @@ def _format_timestamp(value: object) -> str:
     if not isinstance(value, (int, float)):
         return ""
     return datetime.fromtimestamp(value / 1000, tz=UTC).strftime("%Y-%m-%d %H:%M")
+
+
+def _format_size(value: int | None) -> str:
+    """Human-readable byte size."""
+    if value is None:
+        return ""
+    size = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def _apply_mounts(spec: JobSpecification, mounts: list[str]) -> None:
+    """Append ``--mount`` folders to the spec as file resources.
+
+    Each mount is ``/driveId/path`` with an optional ``:ro`` suffix for
+    read-only. Folders are mounted into a job via its ``resources`` list.
+    """
+    if not mounts:
+        return
+    resources = list(spec.resources or [])
+    for raw in mounts:
+        path, _, mode = raw.partition(":")
+        read_only = mode.strip().lower() in {"ro", "readonly", "read-only"}
+        if not path.startswith("/"):
+            _fail(f"Mount path must be absolute (e.g. /12345/data): {raw!r}")
+        resources.append(file_param(path, read_only=read_only))
+    spec.resources = resources
 
 
 def _load_spec(spec_file: Path) -> JobSpecification:

@@ -18,6 +18,7 @@ Quick start::
 from __future__ import annotations
 
 from . import params
+from .catalog import AppParameter, AppSummary, Catalog, ComputeProductInfo
 from .client import UCloudClient
 from .config import Credentials, load_credentials
 from .exceptions import (
@@ -28,6 +29,7 @@ from .exceptions import (
     JobTimeoutError,
     UCloudError,
 )
+from .files import Drive, FileEntry, Files
 from .jobs import Jobs, SSHEndpoint, SSHKeys
 from .models import (
     AppParameterValue,
@@ -43,11 +45,18 @@ __version__ = "0.1.0"
 
 __all__ = [
     "APIError",
+    "AppParameter",
     "AppParameterValue",
+    "AppSummary",
     "AuthError",
+    "Catalog",
     "ComputeProduct",
+    "ComputeProductInfo",
     "ConfigError",
     "Credentials",
+    "Drive",
+    "FileEntry",
+    "Files",
     "JobFailedError",
     "JobSpecification",
     "JobState",

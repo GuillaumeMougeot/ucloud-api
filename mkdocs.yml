@@ -33,6 +33,7 @@ nav:
       - 1. Your first GPU job: tutorials/01-first-gpu-job.md
       - 2. From an existing job: tutorials/02-from-existing-job.md
       - 3. The Python library: tutorials/03-python-library.md
+  - Files and storage: files-and-storage.md
   - CLI reference: cli-reference.md
   - Configuration: configuration.md
   - How it works: how-it-works.md
