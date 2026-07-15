@@ -27,7 +27,7 @@ from .auth import Authenticator
 from .catalog import Catalog
 from .client import UCloudClient
 from .config import DEFAULT_BASE_URL, Credentials, credentials_path, load_credentials
-from .exceptions import APIError, UCloudError
+from .exceptions import APIError, AuthError, UCloudError
 from .files import Files
 from .jobs import Jobs, SSHKeys, specification_to_spec_dict
 from .models import JobSpecification, JobState
@@ -90,52 +90,100 @@ def _friendly_errors() -> Iterator[None]:
 # --------------------------------------------------------------------------- #
 
 
+def _try_load_credentials() -> Credentials | None:
+    """Load stored credentials, or ``None`` if none are configured yet."""
+    try:
+        return load_credentials()
+    except UCloudError:
+        return None
+
+
+def _verify_token(token: str, base_url: str) -> None:
+    """Raise ``AuthError`` if the token cannot mint an access token."""
+    auth = Authenticator(token, base_url)
+    try:
+        auth.access_token(force=True)
+    finally:
+        auth.close()
+
+
+def _prompt_token() -> str:
+    """Ask for a token interactively, or fail if there's no terminal to ask on."""
+    if not sys.stdin.isatty():
+        _fail("No token available. Pipe one in, pass --token, or run `ucloud login` in a terminal.")
+    return str(typer.prompt("Paste your UCloud refresh token", hide_input=True)).strip()
+
+
 @app.command()
 def login(
     token: Annotated[
         str | None,
         typer.Option(
             "--token",
-            help="Refresh token. If omitted, read from stdin (keeps it out of shell history).",
+            help="Refresh token. If omitted, reused from storage, then stdin, then a prompt.",
         ),
     ] = None,
     base_url: Annotated[
-        str, typer.Option("--base-url", help="UCloud deployment URL.")
-    ] = DEFAULT_BASE_URL,
+        str | None, typer.Option("--base-url", help="UCloud deployment URL.")
+    ] = None,
     project: Annotated[
         str | None,
         typer.Option("--project", help="Active project id (see `ucloud projects`)."),
     ] = None,
+    reauth: Annotated[
+        bool,
+        typer.Option("--reauth", help="Force entering a new token even if one is stored."),
+    ] = False,
 ) -> None:
-    """Store a refresh token and verify it works.
+    """Store credentials and verify they work.
 
-    See the README section "Getting your refresh token" for how to extract the
-    token from a browser session on any machine that has one.
+    Only the settings you pass change; the rest are kept. In particular, running
+    ``ucloud login --project <id>`` reuses your existing token instead of asking
+    for it again. A token is obtained in this order: ``--token``, piped stdin,
+    the already-stored token, then an interactive prompt. If a *reused* token has
+    expired, you're prompted for a fresh one. See the README for how to get a
+    token. Config resolution order and files: see the docs on Configuration.
     """
-    if token is None:
-        if sys.stdin.isatty():
-            token = typer.prompt("Paste your UCloud refresh token", hide_input=True)
-        else:
-            token = sys.stdin.read().strip()
-    token = (token or "").strip()
-    if not token:
-        _fail("No token provided.")
+    existing = _try_load_credentials()
+    resolved_base = base_url or (existing.base_url if existing else DEFAULT_BASE_URL)
+    resolved_project = project if project is not None else (existing.project if existing else None)
 
-    # Verify before saving so we never persist a dud.
-    auth = Authenticator(token, base_url)
-    try:
-        auth.access_token(force=True)
-    except UCloudError as exc:
-        _fail(f"Token verification failed: {exc}")
-    finally:
-        auth.close()
+    # An explicitly supplied token: --token, or piped stdin (never prompts here).
+    provided = token
+    if provided is None and not sys.stdin.isatty():
+        provided = sys.stdin.read().strip() or None
 
-    path = Credentials(refresh_token=token, base_url=base_url, project=project).save()
-    console.print(f"[green]Logged in.[/] Credentials saved to {path} (mode 0600).")
-    if project:
-        console.print(f"Active project: [bold]{project}[/]")
+    if reauth:
+        good_token = provided or _prompt_token()
+        try:
+            _verify_token(good_token, resolved_base)
+        except AuthError as exc:
+            _fail(f"Token verification failed: {exc}")
     else:
-        console.print("No project set — run [bold]ucloud projects[/] then re-login with --project.")
+        candidate = provided or (existing.refresh_token if existing else None) or _prompt_token()
+        reused = provided is None and existing is not None
+        try:
+            _verify_token(candidate, resolved_base)
+            good_token = candidate
+        except AuthError as exc:
+            # A token we reused has gone stale — ask for a new one, as expected.
+            if reused and sys.stdin.isatty():
+                err_console.print("[yellow]Your stored token is no longer valid.[/]")
+                good_token = _prompt_token()
+                try:
+                    _verify_token(good_token, resolved_base)
+                except AuthError as exc2:
+                    _fail(f"Token verification failed: {exc2}")
+            else:
+                _fail(f"Token verification failed: {exc}")
+
+    path = Credentials(good_token, resolved_base, resolved_project).save()
+    reused_note = " (reused stored token)" if provided is None and not reauth else ""
+    console.print(f"[green]Logged in.[/]{reused_note} Credentials saved to {path} (mode 0600).")
+    if resolved_project:
+        console.print(f"Active project: [bold]{resolved_project}[/]")
+    else:
+        console.print("No project set — you're in My workspace (see `ucloud projects`).")
 
 
 @app.command()

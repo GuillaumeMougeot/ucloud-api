@@ -26,11 +26,17 @@ Store a refresh token (see [Authentication](authentication.md)).
 
 ```bash
 echo 'TOKEN' | uv run ucloud login          # from stdin (recommended)
-uv run ucloud login                          # hidden interactive prompt
+uv run ucloud login                          # first time: hidden interactive prompt
 uv run ucloud login --token 'TOKEN'          # explicit (avoid: visible in history)
 uv run ucloud login --base-url https://cloud.sdu.dk
-uv run ucloud login --project <PROJECT_ID>   # set the active project
+uv run ucloud login --project <PROJECT_ID>   # switch project — reuses your token
+uv run ucloud login --reauth                 # force entering a new token
 ```
+
+Only the settings you pass change; the rest are kept. A token is obtained in
+this order: `--token`, piped stdin, your already-stored token, then a prompt — so
+`login --project <id>` does **not** re-ask for your token. If a reused token has
+expired, you're prompted for a fresh one; `--reauth` forces that prompt.
 
 ## `ucloud whoami`
 
