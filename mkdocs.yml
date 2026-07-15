@@ -1,0 +1,50 @@
+site_name: ucloud-api
+site_description: Launch and control UCloud (SDU eScience) GPU jobs from the terminal
+repo_url: https://github.com/GuillaumeMougeot/ucloud-api
+repo_name: GuillaumeMougeot/ucloud-api
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.sections
+    - content.code.copy
+    - toc.integrate
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Authentication: authentication.md
+  - Tutorials:
+      - 1. Your first GPU job: tutorials/01-first-gpu-job.md
+      - 2. From an existing job: tutorials/02-from-existing-job.md
+      - 3. The Python library: tutorials/03-python-library.md
+  - CLI reference: cli-reference.md
+  - Configuration: configuration.md
+  - How it works: how-it-works.md
+  - Troubleshooting: troubleshooting.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true

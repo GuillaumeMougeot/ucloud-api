@@ -10,6 +10,9 @@ venv/
 
 # uv: the lockfile IS committed for reproducible installs (this is a CLI app).
 
+# MkDocs build output
+site/
+
 # Tooling caches
 .pytest_cache/
 .mypy_cache/

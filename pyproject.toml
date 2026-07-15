@@ -45,6 +45,9 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
 ]
+docs = [
+    "mkdocs-material>=9.5",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ucloud_api"]

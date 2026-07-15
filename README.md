@@ -11,6 +11,10 @@ it to run, and `ssh` into it from a headless server, a script, or CI.
 > public API the web frontend uses. This is a different platform from the
 > unrelated Chinese "UCloud" (`github.com/ucloud`).
 
+📖 **Documentation:** browse [`docs/`](docs/index.md) on GitHub, or the hosted
+site at <https://guillaumemougeot.github.io/ucloud-api/> (once GitHub Pages is
+enabled — see [below](#documentation-site)).
+
 ---
 
 ## Why this exists
@@ -181,6 +185,22 @@ uv run ruff format .
 uv run mypy
 pre-commit install     # optional
 ```
+
+## Documentation site
+
+Docs live as Markdown in [`docs/`](docs/index.md) and build into a website with
+[MkDocs Material](https://squidfunk.github.io/mkdocs-material/):
+
+```bash
+uv run --group docs mkdocs serve     # live preview at http://127.0.0.1:8000
+uv run --group docs mkdocs build     # static site into ./site
+```
+
+A GitHub Actions workflow (`.github/workflows/docs.yml`) publishes the site to
+GitHub Pages on every push to `main`. **One-time setup:** in the repo, go to
+**Settings → Pages → Build and deployment → Source** and select
+**GitHub Actions**. After that it deploys automatically to
+`https://guillaumemougeot.github.io/ucloud-api/`.
 
 ## License
 
