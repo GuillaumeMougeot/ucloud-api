@@ -14,7 +14,23 @@ When it needs credentials, `ucloud-api` looks in this order (first match wins):
 | --- | --- | --- |
 | `UCLOUD_REFRESH_TOKEN` | Your refresh token | — |
 | `UCLOUD_BASE_URL` | Deployment URL | `https://cloud.sdu.dk` |
+| `UCLOUD_PROJECT` | Active project id (sent as the `Project` header) | — |
 | `UCLOUD_CONFIG_DIR` | Where credentials/cache live | OS config dir |
+
+## Projects
+
+Most drives and GPU allocations belong to a **project**. Set your active project
+so requests carry the `Project` header:
+
+```bash
+uv run ucloud projects                        # list ids + titles
+uv run ucloud login --project <PROJECT_ID>    # persist it
+# or, per-shell:
+export UCLOUD_PROJECT=<PROJECT_ID>
+```
+
+Without it, requests target your personal workspace and project drives return
+`403 "Write permission is required"`.
 
 ## The `.env` file
 

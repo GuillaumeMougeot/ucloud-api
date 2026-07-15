@@ -40,6 +40,7 @@ from .models import (
     SimpleDuration,
 )
 from .ssh import SSHRunner
+from .transfer import Transfer, TransferStats
 
 __version__ = "0.1.0"
 
@@ -67,6 +68,8 @@ __all__ = [
     "SSHKeys",
     "SSHRunner",
     "SimpleDuration",
+    "Transfer",
+    "TransferStats",
     "UCloudClient",
     "UCloudError",
     "__version__",

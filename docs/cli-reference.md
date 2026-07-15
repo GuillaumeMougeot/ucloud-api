@@ -13,6 +13,7 @@ ucloud --help
 | --- | --- |
 | `ucloud login` | Store and verify a refresh token |
 | `ucloud whoami` | Confirm the stored credentials can authenticate |
+| `ucloud projects` | List projects; pick one with `login --project` |
 | `ucloud products` | List compute products you can launch |
 | `ucloud jobs …` | Create, inspect and connect to jobs |
 | `ucloud ssh-keys …` | Manage SSH public keys |
@@ -28,11 +29,18 @@ echo 'TOKEN' | uv run ucloud login          # from stdin (recommended)
 uv run ucloud login                          # hidden interactive prompt
 uv run ucloud login --token 'TOKEN'          # explicit (avoid: visible in history)
 uv run ucloud login --base-url https://cloud.sdu.dk
+uv run ucloud login --project <PROJECT_ID>   # set the active project
 ```
 
 ## `ucloud whoami`
 
 Verify authentication and print the deployment + credentials path.
+
+## `ucloud projects`
+
+List the projects you belong to (id + title), marking the active one. Set the
+active project with `ucloud login --project <id>` or `UCLOUD_PROJECT` in `.env`.
+Most drives and GPU allocations live in a project.
 
 ## `ucloud products`
 
@@ -130,6 +138,33 @@ List the drives (file collections) you can access, with the path to browse each.
 List the contents of a UCloud folder.
 
 ```bash
-uv run ucloud files ls /959294
-uv run ucloud files ls /959294/project
+uv run ucloud files ls /12347837
+uv run ucloud files ls /12347837/project
 ```
+
+## `ucloud files upload <local> <remote>`
+
+Upload a file or directory tree (many files in parallel).
+
+```bash
+uv run ucloud files upload ./dataset /12347837/dataset
+uv run ucloud files upload ./model.pt /12347837/models/ -j 16
+uv run ucloud files upload ./data /12347837/data --no-overwrite --chunk-mb 16
+```
+
+## `ucloud files download <remote> <local>`
+
+Download a file or directory tree (many files in parallel).
+
+```bash
+uv run ucloud files download /12347837/results ./results
+uv run ucloud files download /12347837/model.pt ./model.pt -j 16
+```
+
+## `ucloud files mkdir <path>`
+
+Create a folder on UCloud.
+
+## `ucloud files rm <path>`
+
+Move a file or folder to the trash (asks for confirmation; `-y` to skip).

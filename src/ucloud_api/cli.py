@@ -12,6 +12,13 @@ import tomli_w
 import typer
 from dotenv import load_dotenv
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from rich.table import Table
 
 from .auth import Authenticator
@@ -24,6 +31,7 @@ from .jobs import Jobs, SSHKeys, specification_to_spec_dict
 from .models import JobSpecification, JobState
 from .params import file as file_param
 from .ssh import SSHRunner
+from .transfer import DEFAULT_CHUNK_SIZE, DEFAULT_CONCURRENCY, Transfer
 
 # Load a local .env (searching from the cwd upward) so UCLOUD_* variables are
 # available without exporting them by hand. Real environment variables win.
@@ -77,6 +85,10 @@ def login(
     base_url: Annotated[
         str, typer.Option("--base-url", help="UCloud deployment URL.")
     ] = DEFAULT_BASE_URL,
+    project: Annotated[
+        str | None,
+        typer.Option("--project", help="Active project id (see `ucloud projects`)."),
+    ] = None,
 ) -> None:
     """Store a refresh token and verify it works.
 
@@ -101,8 +113,12 @@ def login(
     finally:
         auth.close()
 
-    path = Credentials(refresh_token=token, base_url=base_url).save()
+    path = Credentials(refresh_token=token, base_url=base_url, project=project).save()
     console.print(f"[green]Logged in.[/] Credentials saved to {path} (mode 0600).")
+    if project:
+        console.print(f"Active project: [bold]{project}[/]")
+    else:
+        console.print("No project set — run [bold]ucloud projects[/] then re-login with --project.")
 
 
 @app.command()
@@ -386,6 +402,129 @@ def files_ls(
         )
     console.print(table)
     console.print(f"\nMount a folder into a job with: [bold]jobs create spec.toml -m {path}[/]")
+
+
+def _transfer_progress() -> Progress:
+    return Progress(
+        BarColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    )
+
+
+@files_app.command("upload")
+def files_upload(
+    local: Annotated[Path, typer.Argument(help="Local file or directory to upload.")],
+    remote: Annotated[str, typer.Argument(help="Destination path, e.g. /959294/project.")],
+    concurrency: Annotated[
+        int, typer.Option("--concurrency", "-j", help="Files transferred in parallel.")
+    ] = DEFAULT_CONCURRENCY,
+    chunk_mb: Annotated[
+        int, typer.Option("--chunk-mb", help="Upload chunk size in MiB.")
+    ] = DEFAULT_CHUNK_SIZE // (1024 * 1024),
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite/--no-overwrite", help="Replace vs. rename on conflict."),
+    ] = True,
+) -> None:
+    """Upload a file or directory to UCloud (many files in parallel)."""
+    with _client() as client, _transfer_progress() as prog:
+        task = prog.add_task("upload", total=None, start=False)
+
+        def on_start(count: int, total: int) -> None:
+            prog.update(task, total=total, description=f"↑ {count} file(s)")
+            prog.start_task(task)
+
+        stats = Transfer(client).upload(
+            local,
+            remote,
+            concurrency=concurrency,
+            chunk_size=chunk_mb * 1024 * 1024,
+            overwrite=overwrite,
+            progress=lambda n: prog.advance(task, n),
+            on_start=on_start,
+        )
+    console.print(
+        f"[green]Uploaded[/] {stats.files} file(s), {_format_size(stats.total_bytes)} → {remote}"
+    )
+
+
+@files_app.command("download")
+def files_download(
+    remote: Annotated[str, typer.Argument(help="UCloud file or directory, e.g. /959294/project.")],
+    local: Annotated[Path, typer.Argument(help="Local destination.")],
+    concurrency: Annotated[
+        int, typer.Option("--concurrency", "-j", help="Files transferred in parallel.")
+    ] = DEFAULT_CONCURRENCY,
+) -> None:
+    """Download a file or directory from UCloud (many files in parallel)."""
+    with _client() as client, _transfer_progress() as prog:
+        task = prog.add_task("download", total=None, start=False)
+
+        def on_start(count: int, total: int) -> None:
+            prog.update(task, total=total or None, description=f"↓ {count} file(s)")
+            prog.start_task(task)
+
+        stats = Transfer(client).download(
+            remote,
+            local,
+            concurrency=concurrency,
+            progress=lambda n: prog.advance(task, n),
+            on_start=on_start,
+        )
+    console.print(
+        f"[green]Downloaded[/] {stats.files} file(s), {_format_size(stats.total_bytes)} → {local}"
+    )
+
+
+@files_app.command("mkdir")
+def files_mkdir(
+    path: Annotated[str, typer.Argument(help="Folder to create, e.g. /959294/newdir.")],
+) -> None:
+    """Create a folder on UCloud."""
+    with _client() as client:
+        Files(client).mkdir(path)
+    console.print(f"[green]Created[/] {path}")
+
+
+@files_app.command("rm")
+def files_rm(
+    path: Annotated[str, typer.Argument(help="File or folder to move to trash.")],
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation.")] = False,
+) -> None:
+    """Move a file or folder to the UCloud trash."""
+    if not yes and not typer.confirm(f"Move {path} to trash?"):
+        raise typer.Abort
+    with _client() as client:
+        Files(client).trash(path)
+    console.print(f"[green]Moved to trash:[/] {path}")
+
+
+@app.command()
+def projects() -> None:
+    """List the projects you belong to (use one with `login --project <id>`)."""
+    with _client() as client:
+        data = client.get("/api/projects/v2/browse", params={"itemsPerPage": 250})
+        active = client.project
+    items = data.get("items", []) if isinstance(data, dict) else []
+    if not items:
+        console.print("[yellow]No projects found.[/] You may be working in your personal space.")
+        return
+    table = Table("Active", "ID", "Title")
+    for it in items:
+        pid = str(it.get("id", "?"))
+        table.add_row(
+            "[green]*[/]" if pid == active else "",
+            pid,
+            str(it.get("specification", {}).get("title", "")),
+        )
+    console.print(table)
+    console.print(
+        "\nSet your active project with: [bold]ucloud login --project <ID>[/] "
+        "(or set UCLOUD_PROJECT in .env)."
+    )
 
 
 @app.command()

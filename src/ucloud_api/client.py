@@ -36,6 +36,19 @@ class UCloudClient:
     def __exit__(self, *_exc: object) -> None:
         self.close()
 
+    @property
+    def base_url(self) -> str:
+        return self._creds.base_url
+
+    @property
+    def project(self) -> str | None:
+        return self._creds.project
+
+    @property
+    def username(self) -> str | None:
+        """The authenticated user's username, decoded from the access token."""
+        return self._auth.username()
+
     def close(self) -> None:
         self._http.close()
 
@@ -74,6 +87,9 @@ class UCloudClient:
     ) -> httpx.Response:
         token = self._auth.access_token(force=force_refresh)
         headers = {"Authorization": f"Bearer {token}"}
+        # UCloud resolves project resources (drives, allocations) via this header.
+        if self._creds.project:
+            headers["Project"] = self._creds.project
         # Drop None-valued query params so callers can pass optionals freely.
         clean_params = {k: v for k, v in (params or {}).items() if v is not None}
         try:

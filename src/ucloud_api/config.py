@@ -27,6 +27,7 @@ DEFAULT_BASE_URL = "https://cloud.sdu.dk"
 
 ENV_REFRESH_TOKEN = "UCLOUD_REFRESH_TOKEN"
 ENV_BASE_URL = "UCLOUD_BASE_URL"
+ENV_PROJECT = "UCLOUD_PROJECT"
 
 
 def config_dir() -> Path:
@@ -49,12 +50,19 @@ class Credentials:
 
     refresh_token: str
     base_url: str = DEFAULT_BASE_URL
+    #: Active project id. When set, it is sent as the ``Project`` header, which
+    #: UCloud requires to operate on project resources (drives, allocations, ...).
+    project: str | None = None
 
     def save(self, path: Path | None = None) -> Path:
         """Persist credentials to disk with restrictive permissions."""
         target = path or credentials_path()
         target.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"refresh_token": self.refresh_token, "base_url": self.base_url}
+        payload = {
+            "refresh_token": self.refresh_token,
+            "base_url": self.base_url,
+            "project": self.project,
+        }
         # Write then chmod, so the token is never briefly world-readable.
         target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         target.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
@@ -65,16 +73,18 @@ def load_credentials(
     *,
     refresh_token: str | None = None,
     base_url: str | None = None,
+    project: str | None = None,
 ) -> Credentials:
     """Resolve credentials from arguments, environment, then the config file."""
     base_url = base_url or os.environ.get(ENV_BASE_URL)
     refresh_token = refresh_token or os.environ.get(ENV_REFRESH_TOKEN)
+    project = project or os.environ.get(ENV_PROJECT)
 
-    if not refresh_token or not base_url:
-        stored = _load_credentials_file()
-        if stored is not None:
-            refresh_token = refresh_token or stored.get("refresh_token")
-            base_url = base_url or stored.get("base_url")
+    stored = _load_credentials_file()
+    if stored is not None:
+        refresh_token = refresh_token or stored.get("refresh_token")
+        base_url = base_url or stored.get("base_url")
+        project = project or stored.get("project")
 
     if not refresh_token:
         raise ConfigError(
@@ -82,7 +92,9 @@ def load_credentials(
             f"{ENV_REFRESH_TOKEN}. See the README for how to obtain a token."
         )
 
-    return Credentials(refresh_token=refresh_token, base_url=base_url or DEFAULT_BASE_URL)
+    return Credentials(
+        refresh_token=refresh_token, base_url=base_url or DEFAULT_BASE_URL, project=project
+    )
 
 
 def _load_credentials_file() -> dict[str, str] | None:

@@ -133,22 +133,32 @@ uv run ucloud jobs ssh xxxx                      # interactive shell
 uv run ucloud jobs ssh xxxx -c "nvidia-smi"      # one-off command
 ```
 
-### Browse files and mount folders into a job
+### Set your project
 
-UCloud storage lives on **drives** (paths look like `/<driveId>/folder`). Browse
-them, then mount a folder into a job — the CLI equivalent of attaching folders on
-the GUI's create page:
+Most drives and GPU allocations live in a **project**. Set it once so requests
+carry the right context (otherwise project drives return `403`):
 
 ```bash
-uv run ucloud files drives                 # -> e.g. /959294  Home
-uv run ucloud files ls /959294             # list a folder
-uv run ucloud jobs create my-job.toml -m /959294/project        # mount it
-uv run ucloud jobs create my-job.toml -m /959294/data -m /959294/ref:ro
+uv run ucloud projects                       # list ids + titles
+uv run ucloud login --project <PROJECT_ID>   # or set UCLOUD_PROJECT in .env
 ```
 
-`-m/--mount` is repeatable; add `:ro` for read-only. See
-[Files and storage](docs/files-and-storage.md) for the details (and how to
-declare mounts inside the spec file instead).
+### Browse, transfer, and mount files
+
+UCloud storage lives on **drives** (paths look like `/<driveId>/folder`):
+
+```bash
+uv run ucloud files drives                              # list drives
+uv run ucloud files ls /12347837                        # list a folder
+uv run ucloud files upload ./dataset /12347837/dataset  # upload (parallel)
+uv run ucloud files download /12347837/results ./out    # download (parallel)
+uv run ucloud jobs create my-job.toml -m /12347837/project      # mount into a job
+uv run ucloud jobs create my-job.toml -m /12347837/data:ro
+```
+
+Uploads use the provider's `WEBSOCKET_V2` streaming protocol; downloads are a
+direct GET; both run many files concurrently. `-m/--mount` is repeatable (add
+`:ro` for read-only). See [Files and storage](docs/files-and-storage.md).
 
 ### Inspect an application's parameters
 
@@ -196,6 +206,9 @@ with UCloudClient() as client:
 | App search  | `POST /api/hpc/apps/search`                                |
 | App params  | `GET /api/hpc/apps/byNameAndVersion`                       |
 | Drives/files| `GET /api/files/collections/browse`, `GET /api/files/browse` |
+| Upload      | `POST /api/files/upload` → stream over `WEBSOCKET_V2`      |
+| Download    | `POST /api/files/download` → HTTPS `GET`                   |
+| Projects    | `GET /api/projects/v2/browse` (+ `Project` header on calls) |
 | Products    | `GET /api/jobs/retrieveProducts`                           |
 
 ## Status & caveats

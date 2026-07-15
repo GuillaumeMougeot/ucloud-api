@@ -32,7 +32,8 @@ web frontend uses. Nothing is scraped or automated through a browser.
 | `client.py` | Authenticated `httpx` wrapper; injects the bearer token, retries once on `401`. |
 | `jobs.py` | Create / retrieve / wait / terminate jobs; parse the SSH endpoint; export a job to a spec. |
 | `catalog.py` | Search apps; list app parameters; list compute products. |
-| `files.py` | Browse drives and folders. |
+| `files.py` | Browse drives and folders; stat/mkdir/trash. |
+| `transfer.py` | Upload (WEBSOCKET_V2) and download (GET), many files concurrently. |
 | `models.py` | Typed `JobSpecification` and the `AppParameterValue` union (serialize to camelCase). |
 | `params.py` | Ergonomic factories for parameter values. |
 | `ssh.py` | Run commands / open a shell on a job via the system `ssh`. |
@@ -53,7 +54,10 @@ web frontend uses. Nothing is scraped or automated through a browser.
 | Products | `GET /api/jobs/retrieveProducts` |
 | SSH keys | `POST /api/ssh` (create), `GET /api/ssh/browse` (list) |
 | Drives | `GET /api/files/collections/browse` |
-| Files | `GET /api/files/browse?path=…` |
+| Files | `GET /api/files/browse?path=…` (retrieve/upload/download/folder use `id`) |
+| Upload | `POST /api/files/upload` → `WEBSOCKET_V2` framed stream |
+| Download | `POST /api/files/download` → HTTPS `GET` |
+| Projects | `GET /api/projects/v2/browse`; project context via the `Project` header |
 
 ## The access-token lifecycle
 

@@ -9,10 +9,12 @@ job's ``resources`` as a ``file`` entry (see the docs, or ``jobs create --mount`
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 from .client import UCloudClient
+from .exceptions import APIError
 
 _FILES_BASE = "/api/files"
 _DRIVES_BASE = "/api/files/collections"
@@ -85,6 +87,42 @@ class Files:
         # Directories first, then alphabetical.
         entries.sort(key=lambda e: (not e.is_dir, e.name.lower()))
         return entries
+
+    def stat(self, path: str) -> FileEntry | None:
+        """Return metadata for a single path, or ``None`` if it doesn't exist."""
+        try:
+            # NOTE: retrieve uses the `id` query param (browse uses `path`).
+            data = self._client.get(f"{_FILES_BASE}/retrieve", params={"id": path})
+        except APIError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        status = data.get("status", {}) if isinstance(data, dict) else {}
+        return FileEntry(
+            path=str(data.get("id", path)),
+            type=str(status.get("type", "?")),
+            size=_as_int(status.get("sizeInBytes")),
+            modified_at=_as_int(status.get("modifiedAt")),
+        )
+
+    def walk_files(self, path: str) -> Iterator[FileEntry]:
+        """Yield every file (not directory) under ``path``, recursively."""
+        for entry in self.list_path(path):
+            if entry.is_dir:
+                yield from self.walk_files(entry.path)
+            elif entry.type == "FILE":
+                yield entry
+
+    def mkdir(self, path: str, *, conflict_policy: str = "RENAME") -> None:
+        """Create a folder at ``path``."""
+        self._client.post(
+            f"{_FILES_BASE}/folder",
+            json={"items": [{"id": path, "conflictPolicy": conflict_policy}]},
+        )
+
+    def trash(self, path: str) -> None:
+        """Move a file or folder to the trash."""
+        self._client.post(f"{_FILES_BASE}/trash", json={"items": [{"id": path}]})
 
 
 def _as_int(value: Any) -> int | None:

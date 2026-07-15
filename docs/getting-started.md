@@ -54,6 +54,16 @@ uv run ucloud whoami
 # Authenticated against https://cloud.sdu.dk
 ```
 
+## Set your project
+
+Most drives and GPU allocations live in a **project**. List yours and set the
+active one (skip only if you work purely in your personal space):
+
+```bash
+uv run ucloud projects                        # shows ids + titles
+uv run ucloud login --project <PROJECT_ID>    # persist it (re-uses your token)
+```
+
 ## Register an SSH key (once)
 
 So that SSH-enabled jobs will accept you:

@@ -28,11 +28,11 @@ _EXPIRY_SKEW_SECONDS = 60
 _DEFAULT_LIFETIME_SECONDS = 9 * 60
 
 
-def _decode_jwt_exp(token: str) -> int | None:
-    """Return the ``exp`` (unix seconds) claim of a JWT without verifying it.
+def decode_jwt_claims(token: str) -> dict[str, object] | None:
+    """Return a JWT's payload claims without verifying its signature.
 
-    We only read the expiry to schedule refreshes; we never trust the token's
-    contents for authorization, so signature verification is unnecessary here.
+    We only read claims (expiry, username) for local bookkeeping; we never trust
+    them for authorization, so signature verification is unnecessary here.
     """
     try:
         payload_segment = token.split(".")[1]
@@ -44,7 +44,13 @@ def _decode_jwt_exp(token: str) -> int | None:
         claims = json.loads(raw)
     except (binascii.Error, ValueError):
         return None
-    exp = claims.get("exp")
+    return claims if isinstance(claims, dict) else None
+
+
+def _decode_jwt_exp(token: str) -> int | None:
+    """Return the ``exp`` (unix seconds) claim of a JWT, or ``None``."""
+    claims = decode_jwt_claims(token)
+    exp = claims.get("exp") if claims else None
     return int(exp) if isinstance(exp, (int, float)) else None
 
 
@@ -73,6 +79,12 @@ class Authenticator:
         if not force and self._access_token and time.time() < self._expires_at:
             return self._access_token
         return self._refresh()
+
+    def username(self) -> str | None:
+        """The authenticated user's username (the access token's ``sub`` claim)."""
+        claims = decode_jwt_claims(self.access_token())
+        sub = claims.get("sub") if claims else None
+        return str(sub) if sub else None
 
     def _refresh(self) -> str:
         url = f"{self._base_url}/auth/refresh"

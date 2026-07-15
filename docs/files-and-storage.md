@@ -7,9 +7,21 @@ path looks like:
 /<driveId>/folder/subfolder
 ```
 
-where `<driveId>` is the numeric id of a drive (your personal drive is usually
-titled *Home*). `ucloud-api` can browse this from the terminal, and — crucially —
-**mount a folder into a job** so it's available inside the running container.
+where `<driveId>` is the numeric id of a drive. `ucloud-api` can browse, upload,
+download, and **mount folders into jobs** from the terminal.
+
+!!! important "Set your project first"
+    Most storage (and GPU allocations) live inside a **project**, not your
+    personal workspace. Operations on project drives require an active project.
+    List yours and set it once:
+
+    ```bash
+    uv run ucloud projects                       # shows ids + titles
+    uv run ucloud login --project <PROJECT_ID>   # or set UCLOUD_PROJECT in .env
+    ```
+
+    Without a project set you'll see `403 "Write permission is required"` on
+    project drives, because the request defaults to your personal space.
 
 ## Browse your drives
 
@@ -37,6 +49,40 @@ uv run ucloud files ls /959294/project
 │ dir  │ project/   │      │ 2025-11-26 15:26 │
 │ file │ notes.md   │ 2 KB │ 2025-11-20 09:03 │
 ```
+
+## Upload and download
+
+Transfer files or whole directory trees. Many files move in parallel, and a
+progress bar shows throughput.
+
+```bash
+# Upload a file or a directory
+uv run ucloud files upload ./dataset /12347837/dataset
+uv run ucloud files upload ./model.pt /12347837/models/
+
+# Download a file or a directory
+uv run ucloud files download /12347837/results ./results
+uv run ucloud files download /12347837/models/model.pt ./model.pt
+```
+
+Options:
+
+- `-j / --concurrency N` — number of files transferred in parallel (default 8).
+- `--chunk-mb N` — upload chunk size (default 8).
+- `--overwrite / --no-overwrite` — replace vs. keep-and-rename on conflict.
+
+Housekeeping:
+
+```bash
+uv run ucloud files mkdir /12347837/newdir
+uv run ucloud files rm /12347837/oldstuff        # moves to trash (asks first; -y to skip)
+```
+
+!!! note "How it works"
+    Uploads use the provider's `WEBSOCKET_V2` streaming protocol; downloads are a
+    direct HTTPS GET. Transfers are network-bound, so `ucloud-api` runs many
+    files concurrently rather than using threads/processes — that's where large
+    datasets (thousands of files) get their speed.
 
 ## Mount a folder into a job
 
@@ -104,10 +150,13 @@ with UCloudClient() as client:
         print("dir " if e.is_dir else "file", e.path)
 ```
 
-## What's not (yet) supported
+## From Python
 
-Uploading and downloading files over the API (UCloud uses a separate chunked
-upload/download protocol) isn't wrapped yet. For now, move data with the GUI, or
-`rsync`/`scp` over SSH into a running job (see
-[Tutorial 1](tutorials/01-first-gpu-job.md)). If you'd find upload/download
-useful, [open an issue](https://github.com/GuillaumeMougeot/ucloud-api/issues).
+```python
+from ucloud_api import UCloudClient, Transfer
+
+with UCloudClient() as client:          # project comes from config/env
+    tx = Transfer(client)
+    tx.upload("./dataset", "/12347837/dataset", concurrency=16)
+    tx.download("/12347837/results", "./results")
+```
