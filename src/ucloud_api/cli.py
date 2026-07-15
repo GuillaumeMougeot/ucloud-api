@@ -389,6 +389,30 @@ def keys_list() -> None:
     console.print(table)
 
 
+@apps_app.command("list")
+def apps_list(
+    category: Annotated[
+        str | None,
+        typer.Option("--category", "-c", help="Filter to a category (substring, e.g. 'bio')."),
+    ] = None,
+) -> None:
+    """List every application in the catalog (grouped by category).
+
+    The catalog is per-deployment, not per-project. Use the shown name with
+    `ucloud apps show <name> <version>` (find a version via `ucloud apps search`).
+    """
+    with _client() as client:
+        groups = Catalog(client).list_apps(category=category)
+    if not groups:
+        console.print("[yellow]No applications found.[/]")
+        return
+    table = Table("Name", "Title", "Category")
+    for g in groups:
+        table.add_row(g.name or "[dim]—[/]", g.title, g.category)
+    console.print(table)
+    console.print(f"\n[dim]{len(groups)} applications.[/]")
+
+
 @apps_app.command("search")
 def apps_search(
     query: Annotated[str, typer.Argument(help="Text to search for, e.g. 'pytorch'.")],

@@ -57,6 +57,17 @@ uv run ucloud products
 uv run ucloud products --provider aau        # filter to one provider
 ```
 
+## `ucloud apps list`
+
+List every application in the catalog, grouped by category. The catalog is
+per-deployment (not per-project), so this is the same set the GUI shows. Use a
+listed name with `apps show <name> <version>`; find a version via `apps search`.
+
+```bash
+uv run ucloud apps list
+uv run ucloud apps list -c bio          # filter to a category (substring match)
+```
+
 ## `ucloud apps search`
 
 Search the application catalog.

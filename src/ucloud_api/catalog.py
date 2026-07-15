@@ -24,6 +24,21 @@ class AppSummary:
 
 
 @dataclass(slots=True)
+class AppGroup:
+    """An application group as shown on the catalog landing page.
+
+    ``name`` is the group's default flavor — the launchable application name you
+    pass to ``apps show`` / use in a spec. A few grouping-only entries have no
+    default flavor, in which case ``name`` is empty.
+    """
+
+    name: str
+    title: str
+    category: str
+    description: str
+
+
+@dataclass(slots=True)
 class AppParameter:
     """A single parameter an application accepts."""
 
@@ -92,6 +107,46 @@ class Catalog:
                     description=str(meta.get("description", "")),
                 )
             )
+        return results
+
+    def list_apps(self, *, category: str | None = None) -> list[AppGroup]:
+        """List every application in the store, grouped by category.
+
+        The catalog is per-deployment (not per-project), so this mirrors what the
+        GUI's landing page shows. It walks the landing page's categories and each
+        category's groups (GET /api/hpc/apps/retrieveLandingPage then
+        /api/hpc/apps/retrieveCategory).
+        """
+        landing = self._client.get(f"{_APPS_BASE}/retrieveLandingPage")
+        categories = landing.get("categories", []) if isinstance(landing, dict) else []
+        results: list[AppGroup] = []
+        seen: set[str] = set()
+        for cat in categories:
+            ctitle = str((cat.get("specification") or {}).get("title", "") or "")
+            if category is not None and category.lower() not in ctitle.lower():
+                continue
+            cid = (cat.get("metadata") or {}).get("id")
+            if cid is None:
+                continue
+            detail = self._client.get(f"{_APPS_BASE}/retrieveCategory", params={"id": cid})
+            status = (detail.get("status") or {}) if isinstance(detail, dict) else {}
+            for group in status.get("groups") or []:
+                spec = group.get("specification") or {}
+                name = str(spec.get("defaultFlavor") or "")
+                title = str(spec.get("title", "") or "")
+                key = f"{ctitle}\0{name}\0{title}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append(
+                    AppGroup(
+                        name=name,
+                        title=title,
+                        category=ctitle,
+                        description=str(spec.get("description", "") or ""),
+                    )
+                )
+        results.sort(key=lambda g: (g.category.lower(), g.title.lower()))
         return results
 
     def app_parameters(self, name: str, version: str) -> list[AppParameter]:

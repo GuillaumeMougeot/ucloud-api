@@ -67,6 +67,50 @@ def test_search_apps_reads_metadata() -> None:
     assert results[0].version == "2.3.0"
 
 
+def test_list_apps_walks_categories_and_groups() -> None:
+    landing = {"categories": [{"metadata": {"id": 210}, "specification": {"title": "AI"}}]}
+    category = {
+        "status": {
+            "groups": [
+                {"specification": {"defaultFlavor": "pytorch-te", "title": "PyTorch"}},
+                {"specification": {"title": "AlphaFold 3"}},  # no defaultFlavor
+            ]
+        }
+    }
+
+    class _SeqClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, path, params=None):
+            self.calls += 1
+            return landing if path.endswith("retrieveLandingPage") else category
+
+    groups = Catalog(_SeqClient()).list_apps()  # type: ignore[arg-type]
+    assert [(g.name, g.title, g.category) for g in groups] == [
+        ("", "AlphaFold 3", "AI"),  # sorted by title; empty name allowed
+        ("pytorch-te", "PyTorch", "AI"),
+    ]
+
+
+def test_list_apps_category_filter_is_substring() -> None:
+    landing = {
+        "categories": [
+            {"metadata": {"id": 1}, "specification": {"title": "Artificial Intelligence"}},
+            {"metadata": {"id": 2}, "specification": {"title": "Bioinformatics"}},
+        ]
+    }
+
+    class _Client:
+        def get(self, path, params=None):
+            if path.endswith("retrieveLandingPage"):
+                return landing
+            return {"status": {"groups": [{"specification": {"defaultFlavor": "x", "title": "X"}}]}}
+
+    groups = Catalog(_Client()).list_apps(category="intelli")  # type: ignore[arg-type]
+    assert {g.category for g in groups} == {"Artificial Intelligence"}
+
+
 def test_app_parameters_parse_and_map_spec_type() -> None:
     payload = {
         "invocation": {
