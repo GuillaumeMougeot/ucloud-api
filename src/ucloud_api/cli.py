@@ -783,7 +783,9 @@ def _format_timestamp(value: object) -> str:
     """Render UCloud's epoch-millisecond timestamps as a local datetime."""
     if not isinstance(value, (int, float)):
         return ""
-    return datetime.fromtimestamp(value / 1000, tz=UTC).strftime("%Y-%m-%d %H:%M")
+    # .astimezone() moves the instant into the machine's zone; without it these read as
+    # UTC and silently disagree with `ls`, `date`, and the web GUI.
+    return datetime.fromtimestamp(value / 1000, tz=UTC).astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 def _format_size(value: int | None) -> str:
@@ -1012,7 +1014,7 @@ def q_logs(name: Annotated[str, typer.Argument(help="Queue name (see `q ls`).")]
 def _run_tick(queue: Queue | None = None) -> None:
     with _client() as client:
         events = Scheduler(client, queue).tick()
-    stamp = datetime.now(tz=UTC).strftime("%H:%M:%S")
+    stamp = datetime.now().astimezone().strftime("%H:%M:%S")
     for event in events:
         console.print(f"[dim]{stamp}[/] {event}")
 
