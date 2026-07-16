@@ -177,13 +177,25 @@ class Scheduler:
             return events
 
         if state.is_terminal:
-            exit_code = self._launcher.read_exit_code(record.launch_spec(), record.name)
-            ok = state is JobState.SUCCESS and (exit_code is None or exit_code == 0)
+            spec = record.launch_spec()
+            exit_code = self._launcher.read_exit_code(spec, record.name)
+            # A batch script always records its exit code before returning, so for a spec
+            # with [setup] run the file missing means the script never got there: the job
+            # was terminated or hit its time limit. UCloud still calls that state SUCCESS
+            # (the *job* ran), which is why the exit file, not the job state, decides.
+            # Without a run command there is no exit file to wait for and the job state is
+            # all we have.
+            expects_exit = spec.setup is not None and spec.setup.run is not None
+            if state is not JobState.SUCCESS:
+                ok, detail = False, ""
+            elif expects_exit and exit_code is None:
+                ok, detail = False, ", run did not finish (terminated or out of time)"
+            else:
+                ok = exit_code is None or exit_code == 0
+                detail = f", run exit code {exit_code}" if exit_code is not None else ""
             record.status = QueueStatus.DONE if ok else QueueStatus.FAILED
             record.finished_at = time.time()
-            record.message = f"job state {state.value}" + (
-                f", run exit code {exit_code}" if exit_code is not None else ""
-            )
+            record.message = f"job state {state.value}{detail}"
             self._queue.save(record)
             return [f"{record.name}: {record.status.value} ({record.message})"]
 

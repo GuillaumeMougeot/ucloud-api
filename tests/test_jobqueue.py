@@ -18,6 +18,14 @@ _SPEC: dict[str, Any] = {
     "schedule": {"auto_extend": "1h", "max_time": "2h"},
 }
 
+# A batch spec: [setup] run means the script records an exit code before it returns, so a
+# missing one is evidence the run never finished.
+_BATCH_SPEC: dict[str, Any] = {
+    **_SPEC,
+    "sync": {"local": ".", "remote": "/123/repos/p"},
+    "setup": {"run": "python train.py"},
+}
+
 
 def _record(name: str, **kwargs: Any) -> QueueRecord:
     return QueueRecord(name=name, spec=dict(_SPEC), base_dir=".", **kwargs)
@@ -180,6 +188,67 @@ def test_tick_fails_on_nonzero_exit_code(tmp_path: Path) -> None:
     rec = queue.get("a")
     assert rec is not None and rec.status is QueueStatus.FAILED
     assert "exit code 3" in rec.message
+
+
+def test_tick_fails_batch_run_that_left_no_exit_code(tmp_path: Path) -> None:
+    """A terminated batch job: UCloud reports SUCCESS, but the run never finished.
+
+    Regression: this was read as success, so `--after` dependents launched off a job the
+    user had cancelled.
+    """
+    jobs = _FakeJobs({"state": "SUCCESS"})
+    launcher = _FakeLauncher(exit_code=None)
+    sched, queue = _scheduler(tmp_path, jobs=jobs, launcher=launcher)
+    queue.add(
+        QueueRecord(
+            name="a", spec=dict(_BATCH_SPEC), base_dir=".", status=QueueStatus.RUNNING, job_id="j1"
+        )
+    )
+    sched.tick()
+    rec = queue.get("a")
+    assert rec is not None and rec.status is QueueStatus.FAILED
+    assert "did not finish" in rec.message
+
+
+def test_tick_blocks_dependents_of_a_terminated_batch_run(tmp_path: Path) -> None:
+    jobs = _FakeJobs({"state": "SUCCESS"})
+    launcher = _FakeLauncher(exit_code=None)
+    sched, queue = _scheduler(tmp_path, jobs=jobs, launcher=launcher)
+    queue.add(
+        QueueRecord(
+            name="a", spec=dict(_BATCH_SPEC), base_dir=".", status=QueueStatus.RUNNING, job_id="j1"
+        )
+    )
+    queue.add(QueueRecord(name="b", spec=dict(_BATCH_SPEC), base_dir=".", after=["a"]))
+    sched.tick()
+    rec_b = queue.get("b")
+    assert rec_b is not None and rec_b.status is QueueStatus.BLOCKED
+    assert launcher.submitted == [], "a cancelled dependency must not satisfy afterok"
+
+
+def test_tick_passes_batch_run_that_recorded_zero(tmp_path: Path) -> None:
+    jobs = _FakeJobs({"state": "SUCCESS"})
+    launcher = _FakeLauncher(exit_code=0)
+    sched, queue = _scheduler(tmp_path, jobs=jobs, launcher=launcher)
+    queue.add(
+        QueueRecord(
+            name="a", spec=dict(_BATCH_SPEC), base_dir=".", status=QueueStatus.RUNNING, job_id="j1"
+        )
+    )
+    sched.tick()
+    rec = queue.get("a")
+    assert rec is not None and rec.status is QueueStatus.DONE
+
+
+def test_tick_without_run_command_trusts_job_state(tmp_path: Path) -> None:
+    """An initScript spec writes no exit file, so SUCCESS alone has to mean success."""
+    jobs = _FakeJobs({"state": "SUCCESS"})
+    launcher = _FakeLauncher(exit_code=None)
+    sched, queue = _scheduler(tmp_path, jobs=jobs, launcher=launcher)
+    queue.add(_record("a", status=QueueStatus.RUNNING, job_id="j1"))
+    sched.tick()
+    rec = queue.get("a")
+    assert rec is not None and rec.status is QueueStatus.DONE
 
 
 def test_tick_extends_job_low_on_time(tmp_path: Path) -> None:

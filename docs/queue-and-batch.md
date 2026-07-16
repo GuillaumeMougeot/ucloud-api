@@ -90,7 +90,13 @@ ucloud q daemon --interval 30 --until-idle   # exit when nothing is left to do
 A tick reconciles every record against the live jobs API, extends jobs that are
 low on time, and submits queued jobs whose dependencies are all `DONE` and whose
 product category still has quota (`ucloud quota`). Failed dependencies mark
-their dependents `BLOCKED` (like `afterok`). Sync + setup run at *launch* time,
+their dependents `BLOCKED` — `--after` is exactly Slurm's `afterok`.
+
+For a batch spec, success means *the run's* exit code was 0, not that the job
+reached `SUCCESS`: UCloud reports `SUCCESS` whenever the script's container exits
+cleanly, including when you terminate the job yourself. A batch script always
+records its exit code before returning, so a missing one means the run never got
+there and the record fails. Sync + setup run at *launch* time,
 so dependent jobs pick up the code as it is when they start.
 
 **Stopping the daemon is always safe.** Running jobs are ordinary UCloud jobs —
@@ -139,6 +145,7 @@ Two situations, two tools:
 | --- | --- |
 | run command exits 0 | job terminates; record `DONE`; dependents launch |
 | run command exits non-zero | job terminates; record `FAILED` (exit code in `q ls`); dependents `BLOCKED` |
+| job terminated or out of time mid-run | record `FAILED` ("run did not finish"); dependents `BLOCKED` |
 | job hits its time limit | `EXPIRED` → record `FAILED` (raise `max_time` or `time_allocation`) |
 | daemon offline at that moment | nothing is lost — the next tick reconciles from the API |
 | no quota left in the category | job waits as `QUEUED` ("waiting for quota") |
