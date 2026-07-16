@@ -13,7 +13,18 @@ UCloud's web app is just a single-page frontend over a fully documented REST
 API. This project talks to that API directly, so you can start a job, wait for
 it to run, and `ssh` into it from a headless server, a script, or CI.
 
-![Demo terminal session](docs/assets/demo.svg)
+```console
+$ ucloud jobs create train.toml -m /12347837/dataset
+Submitting job 'train-unet' (pytorch-te 26.05 on u1-standard-h)...
+Job 5471234 is RUNNING.
+Connect with: ssh ucloud@ssh.cloud.sdu.dk -p 3421
+
+$ ucloud jobs ssh 5471234 -c "nvidia-smi --query-gpu=name --format=csv,noheader"
+NVIDIA H100 80GB HBM3
+
+$ ucloud files download /12347837/results ./results
+downloaded 14 files (2.1 GB) -> results
+```
 
 > ⚠️ **Unofficial.** Not affiliated with SDU eScience Center. It uses the same
 > public API the web frontend uses. This is a different platform from the
@@ -101,9 +112,11 @@ uv run ucloud ssh-keys list
 ### Find the app + product you want (no DevTools needed)
 
 ```bash
+uv run ucloud apps list                    # every app in the catalog, by category
 uv run ucloud apps search pytorch          # -> name/version, e.g. pytorch-te 26.05
-uv run ucloud products                     # -> id/category/provider + cpu/mem/gpu
-uv run ucloud products --provider aau       # filter to one provider
+uv run ucloud products                     # machines your workspace has quota for
+uv run ucloud products --all               # the full deployment catalog
+uv run ucloud quota                        # your allocations: used / quota / left
 ```
 
 Already run a similar job in the GUI? Export it straight to a spec file:
@@ -171,6 +184,7 @@ uv run ucloud apps show pytorch-te 26.05   # which params it needs + their types
 ```bash
 uv run ucloud jobs list
 uv run ucloud jobs status xxxx
+uv run ucloud jobs extend xxxx -H 8     # +8h, like the GUI's extend buttons
 uv run ucloud jobs terminate xxxx
 ```
 

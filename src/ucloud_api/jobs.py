@@ -75,6 +75,20 @@ class Jobs:
     def terminate(self, job_id: str) -> None:
         self._client.post(f"{_JOBS_BASE}/terminate", json={"items": [{"id": job_id}]})
 
+    def extend(self, job_id: str, *, hours: int, minutes: int = 0) -> None:
+        """Add time to a running job's allocation (the GUI's +1h/+8h buttons)."""
+        self._client.post(
+            f"{_JOBS_BASE}/extend",
+            json={
+                "items": [
+                    {
+                        "jobId": job_id,
+                        "requestedTime": {"hours": hours, "minutes": minutes, "seconds": 0},
+                    }
+                ]
+            },
+        )
+
     # -- waiting ------------------------------------------------------------ #
 
     def wait_until_running(

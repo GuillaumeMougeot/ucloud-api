@@ -50,11 +50,25 @@ Most drives and GPU allocations live in a project.
 
 ## `ucloud products`
 
-List compute products (id / category / provider + cpu / memory / gpu).
+List compute products (id / category / provider + cpu / memory / gpu). The
+product *catalog* is the same for every workspace, so by default this filters
+to categories your **active workspace has remaining quota for** — switch
+projects and the list changes with your allocations.
 
 ```bash
-uv run ucloud products
+uv run ucloud products                       # what you can actually launch here
+uv run ucloud products --all                 # the whole deployment catalog
 uv run ucloud products --provider aau        # filter to one provider
+```
+
+## `ucloud quota`
+
+Show the active workspace's allocations — compute and storage quotas, usage,
+and what's left. This is what `products` filters on. Exhausted allocations are
+dimmed.
+
+```bash
+uv run ucloud quota
 ```
 
 ## `ucloud apps list`
@@ -128,6 +142,17 @@ SSH into a running job.
 uv run ucloud jobs ssh 5470001                       # interactive shell
 uv run ucloud jobs ssh 5470001 -c "nvidia-smi"       # run one command
 uv run ucloud jobs ssh 5470001 -i ~/.ssh/id_ed25519  # pick a private key
+```
+
+## `ucloud jobs extend <id>`
+
+Add time to a running job's allocation — the CLI version of the GUI's +1h/+8h
+buttons. Useful when a training run needs longer than you estimated.
+
+```bash
+uv run ucloud jobs extend 5471234              # +1 hour
+uv run ucloud jobs extend 5471234 -H 8         # +8 hours
+uv run ucloud jobs extend 5471234 -H 0 -M 30   # +30 minutes
 ```
 
 ## `ucloud jobs terminate <id>`

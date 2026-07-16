@@ -323,6 +323,20 @@ def jobs_terminate(job_id: Annotated[str, typer.Argument(help="Job id.")]) -> No
     console.print(f"[green]Termination requested[/] for job {job_id}")
 
 
+@jobs_app.command("extend")
+def jobs_extend(
+    job_id: Annotated[str, typer.Argument(help="Job id.")],
+    hours: Annotated[
+        int, typer.Option("--hours", "-H", help="Hours to add to the allocation.")
+    ] = 1,
+    minutes: Annotated[int, typer.Option("--minutes", "-M", help="Minutes to add.")] = 0,
+) -> None:
+    """Add time to a running job (like the GUI's +1h/+8h buttons)."""
+    with _client() as client:
+        Jobs(client).extend(job_id, hours=hours, minutes=minutes)
+    console.print(f"[green]Extended[/] job {job_id} by {hours}h{minutes:02d}m")
+
+
 @jobs_app.command("ssh")
 def jobs_ssh(
     job_id: Annotated[str, typer.Argument(help="Job id.")],
@@ -636,12 +650,26 @@ def products(
     provider: Annotated[
         str | None, typer.Option("--provider", help="Only show this provider (e.g. aau).")
     ] = None,
+    show_all: Annotated[
+        bool,
+        typer.Option(
+            "--all", help="Show the whole deployment catalog, not just what you can use."
+        ),
+    ] = False,
 ) -> None:
-    """List compute products you can launch (id / category / provider + specs)."""
+    """List compute products usable in the active workspace (id / category / specs).
+
+    By default only products whose category has remaining quota in the active
+    workspace are shown (the catalog itself is the same for everyone). Use
+    `--all` for the full deployment catalog, and `ucloud quota` for the numbers.
+    """
     with _client() as client:
-        items = Catalog(client).products(provider=provider)
+        items = Catalog(client).products(provider=provider, usable_only=not show_all)
     if not items:
-        console.print("[yellow]No compute products available.[/]")
+        console.print(
+            "[yellow]No usable compute products in this workspace.[/] "
+            "Check `ucloud quota`, switch project (`ucloud projects`), or pass --all."
+        )
         return
     table = Table("Provider", "ID", "Category", "vCPU", "Mem (GB)", "GPU")
     for p in items:
@@ -654,6 +682,39 @@ def products(
             str(p.gpu or "-"),
         )
     console.print(table)
+    if not show_all:
+        console.print("[dim]Filtered to categories with remaining quota; --all for everything.[/]")
+
+
+@app.command()
+def quota() -> None:
+    """Show the active workspace's allocations (what `products` filters on)."""
+    with _client() as client:
+        wallets = Catalog(client).wallets()
+        active = client.project
+    if not wallets:
+        console.print("[yellow]No allocations in this workspace.[/]")
+        return
+    table = Table("Type", "Category", "Provider", "Used", "Quota", "Left", "Unit")
+    for w in sorted(wallets, key=lambda w: (not w.usable, w.product_type, w.category)):
+        style = "" if w.usable else "dim"
+        table.add_row(
+            w.product_type.capitalize(),
+            w.category,
+            w.provider,
+            _format_quantity(w.usage),
+            _format_quantity(w.quota),
+            _format_quantity(w.max_usable) if w.usable else "[red]0[/]",
+            w.unit,
+            style=style,
+        )
+    console.print(table)
+    where = f"project {active}" if active else "My workspace (personal)"
+    console.print(f"[dim]Workspace: {where}. Switch with `ucloud login --project <id>`.[/]")
+
+
+def _format_quantity(value: float) -> str:
+    return f"{value:,.0f}" if value == int(value) else f"{value:,.1f}"
 
 
 def _format_timestamp(value: object) -> str:

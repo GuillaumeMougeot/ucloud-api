@@ -26,6 +26,24 @@ def test_read_state_missing() -> None:
         _read_state({"status": {}})
 
 
+def test_extend_posts_requested_time() -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.posted: tuple[str, dict] | None = None
+
+        def post(self, path, json=None):
+            self.posted = (path, json)
+            return {}
+
+    client = FakeClient()
+    Jobs(client).extend("5471234", hours=8)  # type: ignore[arg-type]
+    assert client.posted is not None
+    path, body = client.posted
+    assert path.endswith("/jobs/extend")
+    assert body["items"][0]["jobId"] == "5471234"
+    assert body["items"][0]["requestedTime"] == {"hours": 8, "minutes": 0, "seconds": 0}
+
+
 def test_ssh_endpoint_extracts_from_updates() -> None:
     class FakeClient:
         def get(self, path, params=None):

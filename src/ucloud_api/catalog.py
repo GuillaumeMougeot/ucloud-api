@@ -13,6 +13,7 @@ from .client import UCloudClient
 
 _APPS_BASE = "/api/hpc/apps"
 _JOBS_BASE = "/api/jobs"
+_WALLETS_BASE = "/api/accounting/v2"
 
 
 @dataclass(slots=True)
@@ -71,6 +72,28 @@ _APP_PARAM_TO_SPEC_TYPE = {
     "license_server": "license_server",
     "network_ip": "network",
 }
+
+
+@dataclass(slots=True)
+class Wallet:
+    """An allocation (quota) the active workspace can spend from.
+
+    Wallets are what actually differ between projects — the product *catalog* is
+    deployment-wide, but you can only launch products whose category has a wallet
+    with remaining quota in the active workspace.
+    """
+
+    category: str
+    provider: str
+    product_type: str  # COMPUTE | STORAGE | ...
+    unit: str  # display unit, e.g. "Core-hours", "GPU-hours", "GB"
+    quota: float
+    usage: float
+    max_usable: float
+
+    @property
+    def usable(self) -> bool:
+        return self.max_usable > 0
 
 
 @dataclass(slots=True)
@@ -175,8 +198,48 @@ class Catalog:
             )
         return results
 
-    def products(self, *, provider: str | None = None) -> list[ComputeProductInfo]:
-        """List compute products you can launch (GET /api/jobs/retrieveProducts)."""
+    def wallets(self) -> list[Wallet]:
+        """List the active workspace's allocations (GET …/accounting/v2/browseWallets).
+
+        The ``Project`` header decides whose wallets you see: the active
+        project's, or your personal ones in "My workspace".
+        """
+        data = self._client.get(f"{_WALLETS_BASE}/browseWallets", params={"itemsPerPage": 250})
+        items = data.get("items", []) if isinstance(data, dict) else []
+        results: list[Wallet] = []
+        for item in items:
+            pays_for = (item or {}).get("paysFor", {})
+            quota, usage, max_usable, unit = _normalize_accounting(
+                float(item.get("quota", 0) or 0),
+                float(item.get("totalUsage", 0) or 0),
+                float(item.get("maxUsable", 0) or 0),
+                pays_for,
+            )
+            results.append(
+                Wallet(
+                    category=str(pays_for.get("name", "?")),
+                    provider=str(pays_for.get("provider", "?")),
+                    product_type=str(pays_for.get("productType", "?")),
+                    unit=unit,
+                    quota=quota,
+                    usage=usage,
+                    max_usable=max_usable,
+                )
+            )
+        return results
+
+    def products(
+        self, *, provider: str | None = None, usable_only: bool = False
+    ) -> list[ComputeProductInfo]:
+        """List compute products you can launch (GET /api/jobs/retrieveProducts).
+
+        The catalog itself is deployment-wide; pass ``usable_only=True`` to keep
+        only products whose category has remaining quota in the active workspace
+        (see :meth:`wallets`).
+        """
+        usable_categories: set[tuple[str, str]] | None = None
+        if usable_only:
+            usable_categories = {(w.provider, w.category) for w in self.wallets() if w.usable}
         data = self._client.get(f"{_JOBS_BASE}/retrieveProducts")
         by_provider = data.get("productsByProvider", {}) if isinstance(data, dict) else {}
         results: list[ComputeProductInfo] = []
@@ -186,6 +249,10 @@ class Catalog:
             for entry in entries or []:
                 product = (entry or {}).get("product", {})
                 category = product.get("category", {})
+                if usable_categories is not None:
+                    key = (str(category.get("provider", prov)), str(category.get("name", "?")))
+                    if key not in usable_categories:
+                        continue
                 results.append(
                     ComputeProductInfo(
                         id=str(product.get("name", "?")),
@@ -202,3 +269,21 @@ class Catalog:
 
 def _as_int(value: Any) -> int | None:
     return int(value) if isinstance(value, (int, float)) else None
+
+
+def _normalize_accounting(
+    quota: float, usage: float, max_usable: float, pays_for: dict[str, Any]
+) -> tuple[float, float, float, str]:
+    """Convert raw accounting numbers into human units.
+
+    Periodic wallets are metered per minute/hour/day; we normalise everything
+    periodic to hours (e.g. ``Core-hours``), and leave absolute quotas (storage
+    ``GB``) untouched.
+    """
+    unit_name = str((pays_for.get("accountingUnit") or {}).get("name", "") or "unit")
+    frequency = str(pays_for.get("accountingFrequency", "ONCE") or "ONCE")
+    per_hour = {"PERIODIC_MINUTE": 60.0, "PERIODIC_HOUR": 1.0, "PERIODIC_DAY": 1.0 / 24.0}
+    if frequency in per_hour:
+        f = per_hour[frequency]
+        return quota / f, usage / f, max_usable / f, f"{unit_name}-hours"
+    return quota, usage, max_usable, unit_name

@@ -56,6 +56,99 @@ def test_products_provider_filter() -> None:
     assert [p.provider for p in products] == ["aau"]
 
 
+_WALLETS_PAYLOAD = {
+    "items": [
+        {
+            "paysFor": {
+                "name": "gpu-nvidia-b200",
+                "provider": "ucloud",
+                "productType": "COMPUTE",
+                "accountingUnit": {"name": "GPU"},
+                "accountingFrequency": "PERIODIC_MINUTE",
+            },
+            "quota": 660000,
+            "totalUsage": 3000,
+            "maxUsable": 657000,
+        },
+        {
+            "paysFor": {
+                "name": "uc-a100-h",
+                "provider": "aau",
+                "productType": "COMPUTE",
+                "accountingUnit": {"name": "GPU"},
+                "accountingFrequency": "PERIODIC_HOUR",
+            },
+            "quota": 50,
+            "totalUsage": 50,
+            "maxUsable": 0,
+        },
+        {
+            "paysFor": {
+                "name": "storage",
+                "provider": "ucloud",
+                "productType": "STORAGE",
+                "accountingUnit": {"name": "GB"},
+                "accountingFrequency": "ONCE",
+            },
+            "quota": 6144,
+            "totalUsage": 722,
+            "maxUsable": 5422,
+        },
+    ]
+}
+
+
+def test_wallets_normalize_periodic_minutes_to_hours() -> None:
+    wallets = Catalog(_FakeClient(_WALLETS_PAYLOAD)).wallets()  # type: ignore[arg-type]
+    gpu = next(w for w in wallets if w.category == "gpu-nvidia-b200")
+    assert (gpu.quota, gpu.usage, gpu.max_usable) == (11000, 50, 10950)  # minutes -> hours
+    assert gpu.unit == "GPU-hours"
+    assert gpu.usable
+    exhausted = next(w for w in wallets if w.category == "uc-a100-h")
+    assert not exhausted.usable
+    storage = next(w for w in wallets if w.category == "storage")
+    assert (storage.quota, storage.unit) == (6144, "GB")  # absolute quota untouched
+
+
+def test_products_usable_only_filters_by_wallet_category() -> None:
+    class _Client:
+        def get(self, path, params=None):
+            if path.endswith("browseWallets"):
+                return _WALLETS_PAYLOAD
+            return {
+                "productsByProvider": {
+                    "ucloud": [
+                        {
+                            "product": {
+                                "name": "gpu-b200-1",
+                                "category": {"name": "gpu-nvidia-b200", "provider": "ucloud"},
+                            }
+                        },
+                        {
+                            "product": {
+                                "name": "u1-standard-1",
+                                "category": {"name": "u1-standard", "provider": "ucloud"},
+                            }
+                        },
+                    ],
+                    "aau": [
+                        {
+                            "product": {
+                                "name": "a100-1",
+                                "category": {"name": "uc-a100-h", "provider": "aau"},
+                            }
+                        }
+                    ],
+                }
+            }
+
+    catalog = Catalog(_Client())  # type: ignore[arg-type]
+    # Only the category with remaining quota survives: no wallet -> out,
+    # exhausted wallet -> out.
+    assert [p.id for p in catalog.products(usable_only=True)] == ["gpu-b200-1"]
+    assert len(catalog.products(usable_only=False)) == 3
+
+
 def test_search_apps_reads_metadata() -> None:
     payload = {
         "items": [
