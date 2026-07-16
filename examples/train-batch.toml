@@ -1,0 +1,40 @@
+# A batch training job with code sync, environment setup, and queue policy.
+# Submit directly (`ucloud jobs create examples/train-batch.toml`) or queue it
+# (`ucloud q submit examples/train-batch.toml`). Docs: queue-and-batch.md.
+#
+# The [sync]/[setup]/[schedule] sections are consumed by the tool; everything
+# else is UCloud's JobSpecification, exactly as in pytorch.toml.
+
+name = "train-unet"
+replicas = 1
+ssh_enabled = true              # optional: lets you `ucloud jobs ssh` in
+
+[application]
+name = "pytorch-te"
+version = "26.05"               # check with: ucloud apps search pytorch
+
+[product]
+id = "gpu-nvidia-b200-1-gpu"    # check with: ucloud products
+category = "gpu-nvidia-b200"
+provider = "ucloud"
+
+[time_allocation]
+hours = 4                       # honest estimate; [schedule] covers the overrun
+
+# Push this project to a drive folder and mount it at /work/unet.
+# Incremental: only changed files travel. .gitignore is respected.
+[sync]
+local = "."                     # relative to this spec file
+remote = "/12347837/repos/unet"
+
+# Prepare the machine, then run. With `run` set, this is a *batch* job:
+# UCloud terminates it when the command exits — no idle GPU burn.
+[setup]
+python = "uv"                   # install uv + `uv sync` in the synced repo
+run = "uv run python train.py --epochs 50"
+# script = "extra-setup.sh"     # optional: your own setup lines, embedded too
+
+# Queue policy (used by `ucloud q daemon` / `q tick`).
+[schedule]
+auto_extend = "1h"              # +1h whenever <15 min remain
+max_time = "24h"                # never extend past this total

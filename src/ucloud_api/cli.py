@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import subprocess
 import sys
+import time
 import tomllib
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -29,10 +31,13 @@ from .client import UCloudClient
 from .config import DEFAULT_BASE_URL, Credentials, credentials_path, load_credentials
 from .exceptions import APIError, AuthError, UCloudError
 from .files import Files
+from .jobqueue import Queue, QueueRecord, QueueStatus, Scheduler
 from .jobs import Jobs, SSHKeys, specification_to_spec_dict
+from .launch import Launcher, working_tree_selector
 from .models import JobSpecification, JobState
 from .params import file as file_param
 from .shell import FilesShell
+from .spec import LaunchSpec, SyncSpec, load_launch_spec
 from .ssh import SSHRunner
 from .transfer import DEFAULT_CHUNK_SIZE, DEFAULT_CONCURRENCY, Transfer
 
@@ -50,10 +55,16 @@ jobs_app = typer.Typer(help="Create, inspect and connect to jobs.", no_args_is_h
 keys_app = typer.Typer(help="Manage SSH public keys.", no_args_is_help=True)
 apps_app = typer.Typer(help="Discover applications in the catalog.", no_args_is_help=True)
 files_app = typer.Typer(help="Browse UCloud drives and files.", no_args_is_help=True)
+sync_app = typer.Typer(help="Sync a working tree to a UCloud drive.", no_args_is_help=True)
+q_app = typer.Typer(
+    help="Queue jobs with dependencies, auto-extend, and quota gating.", no_args_is_help=True
+)
 app.add_typer(jobs_app, name="jobs")
 app.add_typer(keys_app, name="ssh-keys")
 app.add_typer(apps_app, name="apps")
 app.add_typer(files_app, name="files")
+app.add_typer(sync_app, name="sync")
+app.add_typer(q_app, name="q")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -234,12 +245,24 @@ def jobs_create(
         ),
     ] = None,
 ) -> None:
-    """Submit a job described by a TOML spec file."""
-    spec = _load_spec(spec_file)
-    _apply_mounts(spec, mount or [])
+    """Submit a job described by a TOML spec file.
+
+    Runs the full launch pipeline: [sync] pushes and mounts your working tree,
+    [setup] prepares the environment / runs a batch command, then the job is
+    created. Plain specs without those sections submit as before.
+    """
+    launch = _load_launch(spec_file)
+    _apply_mounts(launch.job, mount or [])
     with _client() as client:
         jobs = Jobs(client)
-        job_id = jobs.create(spec)
+        try:
+            job_id = Launcher(client).submit(
+                launch,
+                tag=launch.job.name or spec_file.stem,
+                on_event=lambda m: console.print(f"[dim]{m}[/]"),
+            )
+        except UCloudError as exc:
+            _fail(str(exc))
         console.print(f"[green]Submitted[/] job [bold]{job_id}[/]")
 
         if not wait:
@@ -364,6 +387,47 @@ def jobs_ssh(
             err_console.print(result.stderr, end="")
         raise typer.Exit(code=result.returncode)
     raise typer.Exit(code=runner.interactive_shell())
+
+
+@jobs_app.command("rsync")
+def jobs_rsync(
+    job_id: Annotated[str, typer.Argument(help="Job id.")],
+    source: Annotated[str, typer.Argument(help="Local path (or in-job path with --pull).")],
+    dest: Annotated[str, typer.Argument(help="In-job path, e.g. /work/repo/src/.")],
+    pull: Annotated[
+        bool, typer.Option("--pull", help="Reverse direction: copy from the job to here.")
+    ] = False,
+    delete: Annotated[
+        bool, typer.Option("--delete", help="Delete extraneous files on the receiving side.")
+    ] = False,
+    identity_file: Annotated[
+        Path | None, typer.Option("--identity", "-i", help="SSH private key to use.")
+    ] = None,
+) -> None:
+    """rsync into (or out of) a running job over its SSH endpoint.
+
+    Real delta transfer — ideal for iterating on code inside a live job:
+    `ucloud jobs rsync 5471234 ./src/ /work/repo/src/`.
+    """
+    with _client() as client:
+        endpoint = Jobs(client).ssh_endpoint(job_id)
+    if endpoint is None:
+        _fail(
+            "No SSH endpoint for this job. Is it running with sshEnabled=true and a registered key?"
+        )
+    ssh_cmd = f"ssh -p {endpoint.port} -o StrictHostKeyChecking=accept-new"
+    if identity_file:
+        ssh_cmd += f" -i {identity_file}"
+    remote = f"{endpoint.user}@{endpoint.host}:{dest if not pull else source}"
+    src, dst = (remote, dest) if pull else (source, remote)
+    args = ["rsync", "-az", "--info=progress2", "-e", ssh_cmd]
+    if delete:
+        args.append("--delete")
+    args += [src, dst]
+    try:
+        raise typer.Exit(code=subprocess.run(args, check=False).returncode)
+    except FileNotFoundError:
+        _fail("The `rsync` command was not found on this machine.")
 
 
 # --------------------------------------------------------------------------- #
@@ -652,9 +716,7 @@ def products(
     ] = None,
     show_all: Annotated[
         bool,
-        typer.Option(
-            "--all", help="Show the whole deployment catalog, not just what you can use."
-        ),
+        typer.Option("--all", help="Show the whole deployment catalog, not just what you can use."),
     ] = False,
 ) -> None:
     """List compute products usable in the active workspace (id / category / specs).
@@ -736,6 +798,225 @@ def _format_size(value: int | None) -> str:
     return f"{size:.1f} TB"
 
 
+# --------------------------------------------------------------------------- #
+# Sync
+# --------------------------------------------------------------------------- #
+
+
+@sync_app.command("push")
+def sync_push(
+    spec_or_local: Annotated[
+        str,
+        typer.Argument(
+            help="A spec TOML with a [sync] section, or a local directory "
+            "(then pass the remote folder as the second argument)."
+        ),
+    ],
+    remote: Annotated[
+        str | None,
+        typer.Argument(help="Remote folder (only with a local directory), e.g. /12345/repos/x."),
+    ] = None,
+) -> None:
+    """Incrementally push a working tree to a UCloud drive folder.
+
+    Only new/changed files travel (the server skips files with matching size
+    and mtime). In a git repo, `.gitignore` is respected; elsewhere well-known
+    junk directories are excluded. Deletions are not propagated.
+    """
+    if remote is None:
+        launch = _load_launch(Path(spec_or_local))
+        if launch.sync is None:
+            _fail(f"{spec_or_local} has no [sync] section (or pass <local> <remote>).")
+        sync = launch.sync
+        base_dir = launch.base_dir
+    else:
+        sync = SyncSpec(local=spec_or_local, remote=remote)
+        base_dir = Path()
+    local = (base_dir / sync.local).resolve()
+    if not local.is_dir():
+        _fail(f"Not a directory: {local}")
+    with _client() as client, _friendly_errors(), _transfer_progress() as prog:
+        task = prog.add_task("sync", total=None, start=False)
+
+        def on_start(count: int, total: int) -> None:
+            prog.update(task, total=total, description=f"↑ {count} file(s)")
+            prog.start_task(task)
+
+        stats = Transfer(client).upload(
+            local,
+            sync.remote,
+            progress=lambda n: prog.advance(task, n),
+            on_start=on_start,
+            select=working_tree_selector(local),
+        )
+    console.print(
+        f"[green]synced[/] {stats.files - stats.skipped} file(s) -> {sync.remote} "
+        f"({stats.skipped} unchanged)"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Queue
+# --------------------------------------------------------------------------- #
+
+
+@q_app.command("submit")
+def q_submit(
+    spec_file: Annotated[Path, typer.Argument(help="Spec TOML (see `jobs create`).")],
+    name: Annotated[
+        str | None,
+        typer.Option("--name", "-n", help="Queue name (default: the spec's job name/file stem)."),
+    ] = None,
+    after: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--after",
+            "-a",
+            help="Run only after this queued job succeeds (repeatable).",
+        ),
+    ] = None,
+    tick_now: Annotated[
+        bool, typer.Option("--tick/--no-tick", help="Advance the queue immediately.")
+    ] = True,
+) -> None:
+    """Queue a job. Independent jobs launch as soon as quota allows; jobs with
+    --after wait for their dependencies (code is synced at launch time)."""
+    launch = _load_launch(spec_file)  # validate now, fail early
+    data = tomllib.loads(spec_file.read_text(encoding="utf-8"))
+    record = QueueRecord(
+        name=name or launch.job.name or spec_file.stem,
+        spec=data,
+        base_dir=str(spec_file.resolve().parent),
+        after=list(after or []),
+    )
+    try:
+        Queue().add(record)
+    except UCloudError as exc:
+        _fail(str(exc))
+    deps = f" (after {', '.join(record.after)})" if record.after else ""
+    console.print(f"[green]queued[/] {record.name}{deps}")
+    if tick_now:
+        _run_tick()
+
+
+@q_app.command("ls")
+def q_ls() -> None:
+    """List queued/submitted/running/finished jobs."""
+    records = Queue().all()
+    if not records:
+        console.print("[dim]queue is empty[/]")
+        return
+    colors = {
+        QueueStatus.QUEUED: "yellow",
+        QueueStatus.SUBMITTED: "cyan",
+        QueueStatus.RUNNING: "green",
+        QueueStatus.DONE: "blue",
+        QueueStatus.FAILED: "red",
+        QueueStatus.BLOCKED: "red",
+        QueueStatus.CANCELLED: "dim",
+    }
+    table = Table("Name", "Status", "Job", "After", "Info")
+    for r in records:
+        table.add_row(
+            r.name,
+            f"[{colors[r.status]}]{r.status.value}[/]",
+            r.job_id or "",
+            ", ".join(r.after),
+            r.message,
+        )
+    console.print(table)
+
+
+@q_app.command("tick")
+def q_tick() -> None:
+    """Advance the queue once: reconcile states, extend low-time jobs, submit
+    eligible ones. Safe to run from cron."""
+    _run_tick()
+
+
+@q_app.command("daemon")
+def q_daemon(
+    interval: Annotated[float, typer.Option("--interval", help="Seconds between ticks.")] = 60.0,
+    until_idle: Annotated[
+        bool,
+        typer.Option("--until-idle", help="Exit when no queued or active jobs remain."),
+    ] = False,
+) -> None:
+    """Tick in a loop. Stopping it never harms running jobs — they are normal
+    UCloud jobs; queued ones wait on disk until something ticks again."""
+    console.print(f"[dim]q daemon: ticking every {interval:g}s (Ctrl-C to stop)[/]")
+    queue = Queue()
+    try:
+        while True:
+            _run_tick(queue)
+            if until_idle and not any(not r.status.is_terminal for r in queue.all()):
+                console.print("[dim]queue idle — exiting[/]")
+                return
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        console.print("\n[dim]daemon stopped; running jobs continue on UCloud[/]")
+
+
+@q_app.command("rm")
+def q_rm(
+    name: Annotated[str, typer.Argument(help="Queue name (see `q ls`).")],
+    terminate: Annotated[
+        bool, typer.Option("--terminate", help="Also terminate the UCloud job if active.")
+    ] = False,
+) -> None:
+    """Remove a job from the queue (dependents become BLOCKED)."""
+    queue = Queue()
+    record = queue.get(name)
+    if record is None:
+        _fail(f"No queued job named {name!r}.")
+    if record.status in (QueueStatus.SUBMITTED, QueueStatus.RUNNING):
+        if not terminate:
+            _fail(
+                f"{name} is {record.status.value} as job {record.job_id}. "
+                "Pass --terminate to also stop it, or terminate it yourself first."
+            )
+        with _client() as client:
+            Jobs(client).terminate(record.job_id or "")
+        console.print(f"[yellow]terminated[/] job {record.job_id}")
+    queue.delete(name)
+    console.print(f"[green]removed[/] {name}")
+
+
+@q_app.command("clear")
+def q_clear() -> None:
+    """Remove all finished (DONE/FAILED/BLOCKED/CANCELLED) records."""
+    queue = Queue()
+    removed = 0
+    for r in queue.all():
+        if r.status.is_terminal:
+            queue.delete(r.name)
+            removed += 1
+    console.print(f"[green]removed[/] {removed} finished record(s)")
+
+
+@q_app.command("logs")
+def q_logs(name: Annotated[str, typer.Argument(help="Queue name (see `q ls`).")]) -> None:
+    """Print a batch run's log (written to the synced folder's .ucloud/ dir)."""
+    record = Queue().get(name)
+    if record is None:
+        _fail(f"No queued job named {name!r}.")
+    launch = record.launch_spec()
+    if launch.sync is None or launch.setup is None or launch.setup.run is None:
+        _fail(f"{name} has no batch run ([sync] + [setup] run), so there is no log.")
+    log_path = f"{launch.sync.remote.rstrip('/')}/.ucloud/run-{name}.log"
+    with _client() as client, _friendly_errors():
+        content = Transfer(client).read_bytes(log_path)
+    print(content.decode(errors="replace"), end="")
+
+
+def _run_tick(queue: Queue | None = None) -> None:
+    with _client() as client:
+        events = Scheduler(client, queue).tick()
+    stamp = datetime.now(tz=UTC).strftime("%H:%M:%S")
+    for event in events:
+        console.print(f"[dim]{stamp}[/] {event}")
+
+
 def _apply_mounts(spec: JobSpecification, mounts: list[str]) -> None:
     """Append ``--mount`` folders to the spec as file resources.
 
@@ -754,17 +1035,11 @@ def _apply_mounts(spec: JobSpecification, mounts: list[str]) -> None:
     spec.resources = resources
 
 
-def _load_spec(spec_file: Path) -> JobSpecification:
-    if not spec_file.exists():
-        _fail(f"Spec file not found: {spec_file}")
+def _load_launch(spec_file: Path) -> LaunchSpec:
     try:
-        data = tomllib.loads(spec_file.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        _fail(f"Could not parse {spec_file}: {exc}")
-    try:
-        return JobSpecification.model_validate(data)
-    except ValueError as exc:
-        _fail(f"Invalid job specification: {exc}")
+        return load_launch_spec(spec_file)
+    except UCloudError as exc:
+        _fail(str(exc))
 
 
 if __name__ == "__main__":  # pragma: no cover

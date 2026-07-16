@@ -16,9 +16,12 @@ ucloud --help
 | `ucloud projects` | List projects; pick one with `login --project` |
 | `ucloud products` | List compute products you can launch |
 | `ucloud jobs …` | Create, inspect and connect to jobs |
+| `ucloud q …` | Queue jobs: dependencies, auto-extend, quota gating |
+| `ucloud sync …` | Push a working tree to a drive (incremental) |
 | `ucloud ssh-keys …` | Manage SSH public keys |
 | `ucloud apps …` | Discover applications |
 | `ucloud files …` | Browse drives and folders |
+| `ucloud quota` | Show the workspace's allocations |
 
 ## `ucloud login`
 
@@ -117,6 +120,11 @@ uv run ucloud jobs create my-job.toml -m /959294/ref:ro        # read-only mount
 [Files and storage](files-and-storage.md). For the TOML schema see
 [Configuration → spec file format](configuration.md#job-spec-files).
 
+Specs may also carry `[sync]`, `[setup]` and `[schedule]` sections — then
+`jobs create` pushes your working tree, prepares the environment, and (with
+`run`) submits a batch job that ends when the command exits. See
+[Queue & batch workflows](queue-and-batch.md).
+
 ## `ucloud jobs list`
 
 List your recent jobs (id, application, state, created).
@@ -158,6 +166,45 @@ uv run ucloud jobs extend 5471234 -H 0 -M 30   # +30 minutes
 ## `ucloud jobs terminate <id>`
 
 Terminate a running job.
+
+## `ucloud jobs rsync <id> <src> <dst>`
+
+Delta-sync files into (or out of) a running job over its SSH endpoint — ideal
+for iterating on code inside a live job. Needs `ssh_enabled = true`, a
+registered key, and `rsync` installed locally.
+
+```bash
+uv run ucloud jobs rsync 5471234 ./src/ /work/repo/src/
+uv run ucloud jobs rsync 5471234 /work/repo/results/ ./out --pull
+uv run ucloud jobs rsync 5471234 ./src/ /work/repo/src/ --delete
+```
+
+## `ucloud sync push`
+
+Incrementally push a working tree to a drive folder: only new/changed files
+travel, `.gitignore` is respected in git repos, junk dirs (`.venv`,
+`__pycache__`, …) are excluded elsewhere. Deletions are not propagated.
+
+```bash
+uv run ucloud sync push train.toml              # use the spec's [sync] section
+uv run ucloud sync push . /12347837/repos/unet  # explicit local + remote
+```
+
+## `ucloud q …` — the job queue
+
+Queue jobs with dependencies, quota gating, and auto-extend. Full guide:
+[Queue & batch workflows](queue-and-batch.md).
+
+```bash
+uv run ucloud q submit train.toml --name base       # launches when quota allows
+uv run ucloud q submit eval.toml --after base       # afterok dependency
+uv run ucloud q ls                                  # statuses
+uv run ucloud q logs base                           # batch run output
+uv run ucloud q tick                                # advance once (cron-able)
+uv run ucloud q daemon --interval 30                # keep advancing
+uv run ucloud q rm base --terminate                 # cancel
+uv run ucloud q clear                               # sweep finished records
+```
 
 ## `ucloud ssh-keys add <public_key_file>`
 

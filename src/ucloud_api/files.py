@@ -94,7 +94,9 @@ class Files:
             # NOTE: retrieve uses the `id` query param (browse uses `path`).
             data = self._client.get(f"{_FILES_BASE}/retrieve", params={"id": path})
         except APIError as exc:
-            if exc.status_code == 404:
+            # 404 = not found; UCloud also answers 400 when a parent folder in
+            # the path does not exist — the same "nothing there" for stat.
+            if exc.status_code in (400, 404):
                 return None
             raise
         status = data.get("status", {}) if isinstance(data, dict) else {}

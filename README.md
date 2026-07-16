@@ -173,6 +173,41 @@ Uploads use the provider's `WEBSOCKET_V2` streaming protocol; downloads are a
 direct GET; both run many files concurrently. `-m/--mount` is repeatable (add
 `:ro` for read-only). See [Files and storage](docs/files-and-storage.md).
 
+### Batch jobs, code sync, and a job queue (the Slurm feeling)
+
+Add three sections to a spec and `jobs create` becomes a full workflow: your
+working tree is pushed to a drive (incremental, `.gitignore`-aware) and mounted,
+the environment is set up, and with `run` the job **terminates itself** when the
+command exits:
+
+```toml
+[sync]
+local = "."
+remote = "/12347837/repos/unet"     # code appears at /work/unet
+
+[setup]
+python = "uv"                        # install uv + `uv sync`
+run = "uv run python train.py"       # batch: job ends when this exits
+
+[schedule]
+auto_extend = "1h"                   # +1h whenever <15 min remain
+max_time = "24h"
+```
+
+Queue jobs with dependencies and let a daemon watch quota and time:
+
+```bash
+uv run ucloud q submit train.toml --name base
+uv run ucloud q submit eval.toml --after base    # runs only if base succeeds
+uv run ucloud q daemon                            # or `q tick` from cron
+uv run ucloud q ls && uv run ucloud q logs base
+```
+
+Stopping the daemon never harms running jobs — they're normal UCloud jobs, and
+batch jobs still self-terminate. Iterate on code inside a live job with real
+rsync: `ucloud jobs rsync <id> ./src/ /work/unet/src/`. See
+[Queue & batch workflows](docs/queue-and-batch.md).
+
 ### Inspect an application's parameters
 
 ```bash

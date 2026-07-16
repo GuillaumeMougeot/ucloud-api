@@ -30,7 +30,9 @@ from .exceptions import (
     UCloudError,
 )
 from .files import Drive, FileEntry, Files
+from .jobqueue import Queue, QueueRecord, QueueStatus, Scheduler
 from .jobs import Jobs, SSHEndpoint, SSHKeys
+from .launch import Launcher
 from .models import (
     AppParameterValue,
     ComputeProduct,
@@ -39,6 +41,7 @@ from .models import (
     NameAndVersion,
     SimpleDuration,
 )
+from .spec import LaunchSpec, ScheduleSpec, SetupSpec, SyncSpec, load_launch_spec
 from .ssh import SSHRunner
 from .transfer import Transfer, TransferStats
 
@@ -63,16 +66,26 @@ __all__ = [
     "JobState",
     "JobTimeoutError",
     "Jobs",
+    "LaunchSpec",
+    "Launcher",
     "NameAndVersion",
+    "Queue",
+    "QueueRecord",
+    "QueueStatus",
     "SSHEndpoint",
     "SSHKeys",
     "SSHRunner",
+    "ScheduleSpec",
+    "Scheduler",
+    "SetupSpec",
     "SimpleDuration",
+    "SyncSpec",
     "Transfer",
     "TransferStats",
     "UCloudClient",
     "UCloudError",
     "__version__",
     "load_credentials",
+    "load_launch_spec",
     "params",
 ]

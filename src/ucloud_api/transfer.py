@@ -62,6 +62,8 @@ ProgressCallback = Callable[[int], None]
 class TransferStats:
     files: int = 0
     total_bytes: int = 0
+    #: Files the server already had (same size + mtime) and told us to skip.
+    skipped: int = 0
 
 
 @dataclass(slots=True)
@@ -101,11 +103,15 @@ class Transfer:
         overwrite: bool = True,
         progress: ProgressCallback | None = None,
         on_start: Callable[[int, int], None] | None = None,
+        select: Callable[[Path], bool] | None = None,
     ) -> TransferStats:
         """Upload a local file or directory tree to ``remote`` on UCloud.
 
         ``on_start(file_count, total_bytes)`` is called once after planning, so a
-        caller can size a progress bar before the transfer begins.
+        caller can size a progress bar before the transfer begins. ``select``
+        filters which files of a directory tree are uploaded. The server skips
+        files it already has with the same size and mtime (``stats.skipped``),
+        which makes re-uploading a tree an incremental sync.
         """
         local = local.expanduser()
         if not local.exists():
@@ -117,13 +123,13 @@ class Transfer:
             (endpoint, protocol, token) = self._create_uploads([target], conflict)[0]
             jobs = [_UploadJob(local, endpoint, protocol, token, local.stat().st_size)]
         else:
-            jobs = self._plan_directory_upload(local, remote, conflict)
+            jobs = self._plan_directory_upload(local, remote, conflict, select)
 
         total = sum(j.size for j in jobs)
         if on_start:
             on_start(len(jobs), total)
-        asyncio.run(self._run_uploads(jobs, concurrency, chunk_size, progress))
-        return TransferStats(files=len(jobs), total_bytes=total)
+        skipped = asyncio.run(self._run_uploads(jobs, concurrency, chunk_size, progress))
+        return TransferStats(files=len(jobs), total_bytes=total, skipped=skipped)
 
     def download(
         self,
@@ -157,11 +163,28 @@ class Transfer:
         asyncio.run(self._run_downloads(jobs, concurrency, chunk_size, progress))
         return TransferStats(files=len(jobs), total_bytes=total)
 
+    def read_bytes(self, remote: str) -> bytes:
+        """Fetch one (small) remote file's content into memory."""
+        endpoint = self._create_downloads([remote])[0]
+        resp = httpx.get(endpoint, timeout=60.0, follow_redirects=True)
+        if resp.status_code >= 400:
+            raise APIError(
+                f"Download failed for {remote} ({resp.status_code})",
+                status_code=resp.status_code,
+            )
+        return resp.content
+
     # -- planning ----------------------------------------------------------- #
 
-    def _plan_directory_upload(self, local: Path, remote: str, conflict: str) -> list[_UploadJob]:
+    def _plan_directory_upload(
+        self,
+        local: Path,
+        remote: str,
+        conflict: str,
+        select: Callable[[Path], bool] | None = None,
+    ) -> list[_UploadJob]:
         remote_root = remote.rstrip("/")
-        local_files = [p for p in local.rglob("*") if p.is_file()]
+        local_files = [p for p in local.rglob("*") if p.is_file() and (select is None or select(p))]
         if not local_files:
             return []
 
@@ -255,22 +278,24 @@ class Transfer:
         concurrency: int,
         chunk_size: int,
         progress: ProgressCallback | None,
-    ) -> None:
+    ) -> int:
+        """Run all uploads; return how many the server skipped as already there."""
         sem = asyncio.Semaphore(max(1, concurrency))
 
-        async def worker(job: _UploadJob) -> None:
+        async def worker(job: _UploadJob) -> bool:
             async with sem:
                 if job.protocol == "WEBSOCKET_V2":
-                    await self._upload_ws(job, progress)
-                elif job.protocol == "CHUNKED":
+                    return await self._upload_ws(job, progress)
+                if job.protocol == "CHUNKED":
                     await self._upload_chunked(job, chunk_size, progress)
-                else:
-                    raise UCloudError(f"Unsupported upload protocol: {job.protocol}")
+                    return False
+                raise UCloudError(f"Unsupported upload protocol: {job.protocol}")
 
-        await asyncio.gather(*(worker(j) for j in jobs))
+        results = await asyncio.gather(*(worker(j) for j in jobs))
+        return sum(results)
 
-    async def _upload_ws(self, job: _UploadJob, progress: ProgressCallback | None) -> None:
-        """Upload one file via the WEBSOCKET_V2 framed protocol (file id 1)."""
+    async def _upload_ws(self, job: _UploadJob, progress: ProgressCallback | None) -> bool:
+        """Upload one file via WEBSOCKET_V2 (file id 1); True if the server skipped it."""
         modified_ms = int(job.local.stat().st_mtime * 1000)
         loop = asyncio.get_running_loop()
         async with websockets.connect(
@@ -299,9 +324,9 @@ class Transfer:
                     elif opcode == _OP_SKIP:
                         if progress:
                             progress(job.size)
-                        return
+                        return True
                     elif opcode == _OP_COMPLETED:
-                        return
+                        return False
 
     async def _upload_chunked(
         self, job: _UploadJob, chunk_size: int, progress: ProgressCallback | None

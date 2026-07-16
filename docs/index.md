@@ -35,6 +35,7 @@ any laptop), copy that string to your server, and from then on everything is API
 | Automate jobs from Python | [Tutorial 3: the Python library](tutorials/03-python-library.md) |
 | Run a full dataset → training → results loop | [Tutorial 4](tutorials/04-dataset-training-results.md) |
 | Browse, upload, download, and mount files | [Files and storage](files-and-storage.md) |
+| Queue jobs, sync code, batch runs, auto-extend | [Queue & batch workflows](queue-and-batch.md) |
 | Look up a command | [CLI reference](cli-reference.md) |
 | Configure tokens / env vars | [Configuration](configuration.md) |
 | Understand what it does under the hood | [How it works](how-it-works.md) |
