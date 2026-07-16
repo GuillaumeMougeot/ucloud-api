@@ -11,6 +11,19 @@ from .config import Credentials, load_credentials
 from .exceptions import APIError
 
 
+def _why(resp: httpx.Response) -> str:
+    """UCloud explains most 4xx in a JSON ``why`` field — surface it in the message.
+
+    Without this the caller sees a bare status code and has to re-issue the request
+    by hand to read the body that already said what was wrong.
+    """
+    try:
+        why = resp.json().get("why")
+    except (ValueError, AttributeError):
+        return ""
+    return f": {why}" if isinstance(why, str) and why else ""
+
+
 class UCloudClient:
     """Authenticated wrapper around ``httpx`` that talks to UCloud.
 
@@ -68,7 +81,7 @@ class UCloudClient:
             resp = self._send(method, path, params=params, json=json, force_refresh=True)
         if resp.status_code >= 400:
             raise APIError(
-                f"{method} {path} failed with {resp.status_code}",
+                f"{method} {path} failed with {resp.status_code}{_why(resp)}",
                 status_code=resp.status_code,
                 body=resp.text,
             )
