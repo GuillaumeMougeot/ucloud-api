@@ -52,20 +52,26 @@ that string to your server, and from then on everything is API + SSH.
 
 ## Install
 
-Uses [uv](https://docs.astral.sh/uv/):
+Uses [uv](https://docs.astral.sh/uv/). Straight from GitHub — no clone needed:
+
+```bash
+uv tool install git+https://github.com/GuillaumeMougeot/ucloud-api
+ucloud --help                       # on your PATH; upgrade: uv tool upgrade ucloud-api
+```
+
+Into an existing project's venv (to also `import ucloud_api`):
+
+```bash
+uv pip install git+https://github.com/GuillaumeMougeot/ucloud-api
+```
+
+Or clone it to hack on:
 
 ```bash
 git clone https://github.com/GuillaumeMougeot/ucloud-api
 cd ucloud-api
 uv sync            # create the venv and install deps
 uv run ucloud --help
-```
-
-Or install the CLI as a standalone tool:
-
-```bash
-uv tool install .
-ucloud --help
 ```
 
 ## Getting your refresh token (the one browser step)

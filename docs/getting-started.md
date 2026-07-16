@@ -10,6 +10,28 @@ This page gets you from nothing to an authenticated CLI in a few minutes.
 
 ## Install
 
+**Just want the command?** Install it straight from GitHub — no clone, and
+`ucloud` lands on your `PATH`:
+
+```bash
+uv tool install git+https://github.com/GuillaumeMougeot/ucloud-api
+ucloud --help
+```
+
+Upgrade later with `uv tool upgrade ucloud-api`; remove it with
+`uv tool uninstall ucloud-api`.
+
+**Into an existing project's virtualenv** (e.g. to `import ucloud_api` from your
+training code):
+
+```bash
+uv pip install git+https://github.com/GuillaumeMougeot/ucloud-api
+```
+
+Or pin it as a dependency with `uv add git+https://github.com/GuillaumeMougeot/ucloud-api`.
+
+**To hack on it**, clone and sync:
+
 ```bash
 git clone https://github.com/GuillaumeMougeot/ucloud-api
 cd ucloud-api
@@ -17,16 +39,10 @@ uv sync                 # create the venv and install dependencies
 uv run ucloud --help
 ```
 
-Prefer a standalone command on your `PATH`?
-
-```bash
-uv tool install .
-ucloud --help           # now available everywhere
-```
-
 !!! tip
-    The rest of the docs write `uv run ucloud …`. If you used `uv tool install`,
-    just drop the `uv run` prefix.
+    The rest of the docs write `uv run ucloud …`, which is what the cloned-repo
+    workflow needs. If you installed with `uv tool install`, just drop the
+    `uv run` prefix.
 
 ## Authenticate
 

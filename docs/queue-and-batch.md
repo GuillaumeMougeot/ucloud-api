@@ -92,11 +92,14 @@ again. Batch jobs still auto-terminate on completion because that is enforced
 by UCloud, not the daemon. The only thing that stops is auto-extend and the
 submission of queued jobs.
 
-Run the daemon on any always-on machine (a lab server is perfect), or put
-`ucloud q tick` in cron:
+Run the daemon on any always-on machine (a lab server is perfect) — `tmux new -s
+ucloud 'ucloud q daemon'` survives your SSH session — or put `ucloud q tick` in
+cron. Cron has no PATH to speak of, so use the absolute path that
+`uv tool install` gives you (`which ucloud` to find it, usually
+`~/.local/bin/ucloud`):
 
 ```cron
-*/5 * * * * cd /path/to/project && uv run ucloud q tick >> ~/.ucloud-tick.log 2>&1
+*/5 * * * * ~/.local/bin/ucloud q tick >> ~/.ucloud-tick.log 2>&1
 ```
 
 ## Syncing code
