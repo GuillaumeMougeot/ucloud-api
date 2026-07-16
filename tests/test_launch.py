@@ -23,10 +23,23 @@ def test_setup_script_uv_env_block() -> None:
 
 def test_setup_script_run_records_exit_code_and_log() -> None:
     script = build_setup_script(SetupSpec(run="python train.py"), _SYNC, "t2")
-    assert "( python train.py ) 2>&1 | tee" in script
-    assert "run-t2.log" in script
+    assert "( python train.py )" in script
     assert 'echo "$code" > "$UCLOUD_DIR/exit-t2"' in script
-    assert script.rstrip().endswith('exit "$code"')
+    # The run's status has to survive the tee pipeline to become the job's status.
+    assert script.rstrip().endswith('exit "${PIPESTATUS[0]}"')
+
+
+def test_setup_script_tees_setup_output_not_just_the_run() -> None:
+    """Environment build output must reach the drive: that is where jobs usually fail."""
+    script = build_setup_script(SetupSpec(python="uv", run="python train.py"), _SYNC, "t2")
+    assert '} 2>&1 | tee "$UCLOUD_DIR/run-t2.log"' in script
+    uv_line = script.index("uv sync")
+    assert uv_line < script.index("| tee"), "uv sync must run inside the teed block"
+
+
+def test_setup_script_without_run_still_tees() -> None:
+    script = build_setup_script(SetupSpec(python="uv"), _SYNC, "t4")
+    assert '} 2>&1 | tee "$UCLOUD_DIR/run-t4.log"' in script
 
 
 def test_setup_script_embeds_user_script(tmp_path: Path) -> None:

@@ -50,8 +50,15 @@ What each section does:
   **`batchScript`**: UCloud itself terminates the job when the command exits —
   no idle GPU burn even if nothing is watching. Without `run` it uses
   **`initScript`**: the environment is prepared and the job stays up for you to
-  `ssh` in. The run's output lands in `<remote>/.ucloud/run-<name>.log` and its
-  exit code in `.ucloud/exit-<name>` (used for dependency checks).
+  `ssh` in. Output from the whole script — environment build included, which is
+  where a fresh machine usually goes wrong — is teed to
+  `<remote>/.ucloud/run-<name>.log`, readable with `ucloud q logs` while the job
+  is still running. The run's exit code lands in `.ucloud/exit-<name>` (used for
+  dependency checks).
+
+    Not every app accepts every option: `pytorch-te`, for instance, rejects
+    `ssh_enabled = true` outright ("This application does not support SSH but it
+    is required"), so `q logs` is the way to watch it.
 - **`[schedule]`** — read by the queue daemon: when a monitored job has less
   than 15 minutes left and is still running, it is extended by `auto_extend`,
   up to `max_time` total (default cap 24h).
