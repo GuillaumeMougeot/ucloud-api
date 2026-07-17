@@ -174,4 +174,25 @@ Measured on a real 480 GB / 5.7M-image training run — details in
   auto-extend Slurm doesn't have.
 - Nothing here required SSH, a browser, or your attention at 3 a.m.
 
+## By the way — you could have scaffolded most of this
+
+Now that you've written every section by hand, the shortcut is safe to reveal:
+in a Python project, one command generates the spec and setup script you just
+built — with **real values read from your workspace** (your drive, a GPU
+product with quota, the newest PyTorch, whether the app takes SSH):
+
+```bash
+uv run ucloud init
+```
+
+You'll recognize every line of what it writes; edit `run` and submit. Details:
+[`ucloud init`](../cli-reference.md#ucloud-init).
+
+One honest caveat: `init` is deliberately narrow — it scaffolds **Python + uv
+batch jobs** and refuses anything else rather than emitting a template that
+cannot work. The workflow itself has no such limit: `[sync]` ships any file
+tree, `[setup] script`/`run` are plain bash, and the queue doesn't care what
+language your job runs — only the `python = "uv"` shortcut and `init` are
+Python-specific. For other stacks, write the spec the way you just did.
+
 Next: [drive it all from Python](03-python-library.md).
