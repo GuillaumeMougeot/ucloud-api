@@ -138,6 +138,14 @@ class Launcher:
             return None
         return f"{spec.sync.remote.rstrip('/')}/.ucloud/exit-{tag}"
 
+    def run_log_path(self, spec: LaunchSpec, tag: str) -> str | None:
+        """Remote path of the script's teed log, if the spec produces one.
+
+        The whole generated script tees there (setup included), so this exists
+        for ``[setup]`` specs without a ``run`` command too.
+        """
+        return run_log_path(spec, tag)
+
     def read_exit_code(self, spec: LaunchSpec, tag: str) -> int | None:
         """The run command's recorded exit code, or ``None`` if not written."""
         path = self.exit_file_path(spec, tag)
@@ -173,6 +181,17 @@ class Launcher:
             local = Path(tmp) / PurePosixPath(remote).name
             local.write_text(content, encoding="utf-8")
             self._transfer.upload(local, remote)
+
+
+def run_log_path(spec: LaunchSpec, tag: str) -> str | None:
+    """Remote path of a launched spec's log, or ``None`` if it has no script at all.
+
+    Shared by ``jobs logs`` and ``q logs`` so a spec's log lands in — and is read
+    from — the same place no matter which command submitted it.
+    """
+    if spec.sync is None or spec.setup is None:
+        return None
+    return f"{spec.sync.remote.rstrip('/')}/.ucloud/run-{tag}.log"
 
 
 def build_setup_script(

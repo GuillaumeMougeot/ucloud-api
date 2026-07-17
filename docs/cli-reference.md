@@ -187,6 +187,16 @@ uv run ucloud jobs extend 5471234 -H 0 -M 30   # +30 minutes
 
 Terminate a running job.
 
+## `ucloud jobs logs <spec.toml>`
+
+Print the setup + run log of a job submitted with `jobs create` — the same log
+`q logs` reads, so it works while the job is running. Pass `--name` if you
+submitted under a custom tag.
+
+```bash
+uv run ucloud jobs logs train.toml
+```
+
 ## `ucloud jobs rsync <id> <src> <dst>`
 
 Delta-sync files into (or out of) a running job over its SSH endpoint — ideal
@@ -218,13 +228,19 @@ Queue jobs with dependencies, quota gating, and auto-extend. Full guide:
 ```bash
 uv run ucloud q submit train.toml --name base       # launches when quota allows
 uv run ucloud q submit eval.toml --after base       # afterok dependency
+uv run ucloud q submit train.toml -m /12345/data:ro # extra mount, like jobs create
 uv run ucloud q ls                                  # statuses
-uv run ucloud q logs base                           # batch run output
+uv run ucloud q logs base                           # setup + run output
 uv run ucloud q tick                                # advance once (cron-able)
 uv run ucloud q daemon --interval 30                # keep advancing
 uv run ucloud q rm base --terminate                 # cancel
 uv run ucloud q clear                               # sweep finished records
 ```
+
+When to use which: `q submit` when anything should happen *after* submission
+(dependencies, auto-extend, waiting for quota); `jobs create` for one-shot jobs
+you watch yourself. Same spec file, same pipeline, same log location — see
+[jobs create vs q submit](queue-and-batch.md#jobs-create-vs-q-submit).
 
 ## `ucloud ssh-keys add <public_key_file>`
 

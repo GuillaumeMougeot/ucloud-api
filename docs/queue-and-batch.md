@@ -5,6 +5,38 @@ with dependencies, let a scheduler watch quota and time — with two improvement
 over Slurm: specs are TOML (not `#SBATCH` comments), and running jobs can gain
 time instead of dying at the estimate.
 
+## `jobs create` vs `q submit`
+
+Both take the same spec file and run the same sync + setup pipeline. The
+difference is one thing: **`q submit` remembers the job** (one local JSON record,
+keyed by a name), and that record is what dependencies, auto-extend, quota
+waiting, and `q logs <name>` hang off. `jobs create` is the primitive — one API
+call, nothing stored, the tool forgets your job the moment the command returns.
+
+UCloud's API has no scheduler of its own (no `afterok`, no "wait for quota", no
+auto-extend), so the queue is a client-side one, and client-side state has to
+live somewhere: on your machine, advanced by `q tick` / `q daemon`.
+
+| | `jobs create` | `q submit` |
+| --- | --- | --- |
+| Slurm analogue | grab a node and run it yourself | `sbatch` |
+| local state | none | one JSON record per job |
+| dependencies (`--after`) | — | yes (afterok) |
+| no quota right now | fails | waits as `QUEUED` |
+| `[schedule]` auto-extend | ignored (warns) | honoured by ticks |
+| run's exit code | — | in `q ls` |
+| logs | `jobs logs <spec.toml>` | `q logs <name>` |
+| needs ticking | no | yes — `q tick` / `q daemon` |
+
+Rule of thumb: if anything should happen *after* submission — another job, an
+extension, launching when quota frees up — use `q submit`. For a one-shot
+interactive session you'll watch yourself (Jupyter, a shell box), `jobs create`
+is enough and leaves nothing behind.
+
+Both derive the same tag (the spec's `name`, else the file stem) and write the
+run's log and exit code to the same place on the drive, so a spec can move
+between the two commands freely; `--mount/-m` works identically on both.
+
 ## The extended spec file
 
 Three optional sections turn a plain job spec into a full workflow. They are

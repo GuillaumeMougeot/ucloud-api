@@ -132,3 +132,16 @@ def test_exit_file_only_for_batch_runs() -> None:
     assert launcher.exit_file_path(batch, "job1") == "/1/r/.ucloud/exit-job1"
     plain = parse_launch_spec(dict(_JOB))
     assert launcher.exit_file_path(plain, "job1") is None
+
+
+def test_run_log_path_shared_by_both_submit_paths() -> None:
+    """`jobs logs` and `q logs` must read the same file for the same spec + tag."""
+    from ucloud_api.launch import run_log_path
+
+    batch = parse_launch_spec({**_JOB, "sync": {"remote": "/1/r"}, "setup": {"run": "x"}})
+    assert run_log_path(batch, "job1") == "/1/r/.ucloud/run-job1.log"
+    # Setup-only specs tee too (the whole script is piped to the log), so they have one.
+    setup_only = parse_launch_spec({**_JOB, "sync": {"remote": "/1/r"}, "setup": {"python": "uv"}})
+    assert run_log_path(setup_only, "job1") == "/1/r/.ucloud/run-job1.log"
+    plain = parse_launch_spec(dict(_JOB))
+    assert run_log_path(plain, "job1") is None

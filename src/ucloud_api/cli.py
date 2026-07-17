@@ -33,8 +33,8 @@ from .exceptions import APIError, AuthError, UCloudError
 from .files import Files
 from .jobqueue import Queue, QueueRecord, QueueStatus, Scheduler
 from .jobs import Jobs, SSHKeys, specification_to_spec_dict
-from .launch import Launcher, working_tree_selector
-from .models import JobSpecification, JobState
+from .launch import Launcher, run_log_path, working_tree_selector
+from .models import FileParam, JobSpecification, JobState
 from .params import file as file_param
 from .scaffold import Plan, detect_project, pick_app, pick_drive, pick_product, write_files
 from .shell import FilesShell
@@ -254,17 +254,29 @@ def jobs_create(
     """
     launch = _load_launch(spec_file)
     _apply_mounts(launch.job, mount or [])
+    if launch.schedule is not None:
+        console.print(
+            r"[yellow]note:[/] this spec has a \[schedule] section, which only the queue "
+            "acts on — nothing will auto-extend this job. Use `ucloud q submit` for that."
+        )
+    tag = _default_tag(launch, spec_file)
     with _client() as client:
         jobs = Jobs(client)
         try:
             job_id = Launcher(client).submit(
                 launch,
-                tag=launch.job.name or spec_file.stem,
-                on_event=lambda m: console.print(f"[dim]{m}[/]"),
+                tag=tag,
+                # The launcher emits its own "submitted job <id>" as the last event,
+                # so the sync/setup events are the only ones worth echoing here.
+                on_event=lambda m: (
+                    None if m.startswith("submitted job") else console.print(f"[dim]{m}[/]")
+                ),
             )
         except UCloudError as exc:
             _fail(str(exc))
         console.print(f"[green]Submitted[/] job [bold]{job_id}[/]")
+        if run_log_path(launch, tag) is not None:
+            console.print(f"[dim]follow the run: ucloud jobs logs {spec_file}[/]")
 
         if not wait:
             return
@@ -280,7 +292,10 @@ def jobs_create(
                 _fail(str(exc))
         console.print(f"[green]Job {job_id} is RUNNING.[/]")
 
-        if show_ssh:
+        # Only chase an SSH endpoint the spec asked for: batch apps like pytorch-te
+        # have no SSH at all, and the old unconditional hint sent people debugging
+        # a "missing" endpoint that was never going to exist.
+        if show_ssh and launch.job.ssh_enabled:
             endpoint = jobs.ssh_endpoint(job_id)
             if endpoint:
                 console.print(f"Connect with: [bold]{endpoint.command}[/]")
@@ -388,6 +403,41 @@ def jobs_ssh(
             err_console.print(result.stderr, end="")
         raise typer.Exit(code=result.returncode)
     raise typer.Exit(code=runner.interactive_shell())
+
+
+@jobs_app.command("logs")
+def jobs_logs(
+    spec_file: Annotated[Path, typer.Argument(help="The spec TOML the job was created from.")],
+    name: Annotated[
+        str | None,
+        typer.Option(
+            "--name",
+            "-n",
+            help="Tag the job was submitted under (default: the spec's job name/file stem).",
+        ),
+    ] = None,
+) -> None:
+    """Print the setup + run log of a job submitted with `jobs create`.
+
+    Same log `ucloud q logs` reads — it lives on the drive next to the synced
+    code, so it works while the job is still running.
+    """
+    launch = _load_launch(spec_file)
+    _print_run_log(launch, name or _default_tag(launch, spec_file))
+
+
+def _default_tag(launch: LaunchSpec, spec_file: Path) -> str:
+    """One tag rule for both submit paths, so logs/exit files land in one place."""
+    return launch.job.name or spec_file.stem
+
+
+def _print_run_log(launch: LaunchSpec, tag: str) -> None:
+    log_path = run_log_path(launch, tag)
+    if log_path is None:
+        _fail("this spec has no [sync] + [setup], so no log is written on the drive.")
+    with _client() as client, _friendly_errors():
+        content = Transfer(client).read_bytes(log_path)
+    print(content.decode(errors="replace"), end="")
 
 
 @jobs_app.command("rsync")
@@ -961,6 +1011,15 @@ def q_submit(
             help="Run only after this queued job succeeds (repeatable).",
         ),
     ] = None,
+    mount: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--mount",
+            "-m",
+            help="Mount a UCloud folder into the job, e.g. -m /12345/data. "
+            "Append ':ro' for read-only. Repeatable (same flag as `jobs create`).",
+        ),
+    ] = None,
     tick_now: Annotated[
         bool, typer.Option("--tick/--no-tick", help="Advance the queue immediately.")
     ] = True,
@@ -969,8 +1028,18 @@ def q_submit(
     --after wait for their dependencies (code is synced at launch time)."""
     launch = _load_launch(spec_file)  # validate now, fail early
     data = tomllib.loads(spec_file.read_text(encoding="utf-8"))
+    if mount:
+        # Baked into the stored spec, not applied at submit: the record is what the
+        # scheduler launches from, possibly much later and from another process.
+        try:
+            parsed = _parse_mounts(mount)
+        except UCloudError as exc:
+            _fail(str(exc))
+        resources = list(data.get("resources") or [])
+        resources += [p.model_dump(by_alias=True, exclude_none=True) for p in parsed]
+        data["resources"] = resources
     record = QueueRecord(
-        name=name or launch.job.name or spec_file.stem,
+        name=name or _default_tag(launch, spec_file),
         spec=data,
         base_dir=str(spec_file.resolve().parent),
         after=list(after or []),
@@ -1082,17 +1151,11 @@ def q_clear() -> None:
 
 @q_app.command("logs")
 def q_logs(name: Annotated[str, typer.Argument(help="Queue name (see `q ls`).")]) -> None:
-    """Print a batch run's log (written to the synced folder's .ucloud/ dir)."""
+    """Print a job's setup + run log (written to the synced folder's .ucloud/ dir)."""
     record = Queue().get(name)
     if record is None:
         _fail(f"No queued job named {name!r}.")
-    launch = record.launch_spec()
-    if launch.sync is None or launch.setup is None or launch.setup.run is None:
-        _fail(f"{name} has no batch run ([sync] + [setup] run), so there is no log.")
-    log_path = f"{launch.sync.remote.rstrip('/')}/.ucloud/run-{name}.log"
-    with _client() as client, _friendly_errors():
-        content = Transfer(client).read_bytes(log_path)
-    print(content.decode(errors="replace"), end="")
+    _print_run_log(record.launch_spec(), name)
 
 
 def _run_tick(queue: Queue | None = None) -> None:
@@ -1103,22 +1166,27 @@ def _run_tick(queue: Queue | None = None) -> None:
         console.print(f"[dim]{stamp}[/] {event}")
 
 
-def _apply_mounts(spec: JobSpecification, mounts: list[str]) -> None:
-    """Append ``--mount`` folders to the spec as file resources.
-
-    Each mount is ``/driveId/path`` with an optional ``:ro`` suffix for
-    read-only. Folders are mounted into a job via its ``resources`` list.
-    """
-    if not mounts:
-        return
-    resources = list(spec.resources or [])
+def _parse_mounts(mounts: list[str]) -> list[FileParam]:
+    """Parse ``--mount`` values (``/driveId/path``, optional ``:ro`` suffix)."""
+    parsed: list[FileParam] = []
     for raw in mounts:
         path, _, mode = raw.partition(":")
         read_only = mode.strip().lower() in {"ro", "readonly", "read-only"}
         if not path.startswith("/"):
-            _fail(f"Mount path must be absolute (e.g. /12345/data): {raw!r}")
-        resources.append(file_param(path, read_only=read_only))
-    spec.resources = resources
+            raise UCloudError(f"Mount path must be absolute (e.g. /12345/data): {raw!r}")
+        parsed.append(file_param(path, read_only=read_only))
+    return parsed
+
+
+def _apply_mounts(spec: JobSpecification, mounts: list[str]) -> None:
+    """Append ``--mount`` folders to the spec as file resources."""
+    if not mounts:
+        return
+    try:
+        parsed = _parse_mounts(mounts)
+    except UCloudError as exc:
+        _fail(str(exc))
+    spec.resources = [*(spec.resources or []), *parsed]
 
 
 def _load_launch(spec_file: Path) -> LaunchSpec:
