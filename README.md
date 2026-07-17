@@ -11,18 +11,25 @@ eScience Center platform in Denmark) from a terminal — no web GUI required.
 
 UCloud's web app is just a single-page frontend over a fully documented REST
 API. This project talks to that API directly, so you can start a job, wait for
-it to run, and `ssh` into it from a headless server, a script, or CI.
+it to run, and collect its output from a headless server, a script, or CI —
+plus what the API alone doesn't give you: a job queue with dependencies,
+incremental code sync, and automatic time extension.
 
 ```console
-$ ucloud jobs create train.toml -m /12347837/dataset
-Submitting job 'train-unet' (pytorch-te 26.05 on u1-standard-h)...
-Job 5471234 is RUNNING.
-Connect with: ssh ucloud@ssh.cloud.sdu.dk -p 3421
+$ ucloud q submit train.toml --name base
+queued base
+09:07:05 base: synced 42 file(s) to /12347837/repos/my-trainer (0 unchanged)
+09:07:05 base: submitted job 12356703
 
-$ ucloud jobs ssh 5471234 -c "nvidia-smi --query-gpu=name --format=csv,noheader"
-NVIDIA H100 80GB HBM3
+$ ucloud q submit eval.toml --after base     # Slurm's afterok
+queued eval (after base)
 
-$ ucloud files download /12347837/results ./results
+$ ucloud q logs base
+device NVIDIA B200
+epoch  train_loss  valid_loss  f1     time
+0      1.652       1.380       0.717  1:22:34
+
+$ ucloud files download /12347837/repos/my-trainer/results ./results
 downloaded 14 files (2.1 GB) -> results
 ```
 
@@ -152,20 +159,18 @@ uv run ucloud jobs show 5466088 -o my-job.toml   # seed from an existing job
 # then edit the app name/version and product, e.g. to pytorch-te + a GPU product
 ```
 
-### Start a job and connect
+### Start a job
 
-1. Copy `examples/pytorch.toml` (or a `jobs show` export) and fill in the real
-   `application.version` and `product` values from the commands above.
-2. Create the job, wait for it, and get the SSH command:
+Copy `examples/pytorch.toml` (or a `jobs show` export), fill in the real
+`application.version` and `product` values from the commands above, and:
 
 ```bash
 uv run ucloud jobs create my-job.toml --wait
-# ...
-# Job xxxx is RUNNING.
-# Connect with: ssh ucloud@ssh.cloud.sdu.dk -p 3421
+uv run ucloud jobs logs my-job.toml              # a batch run's output, live
 ```
 
-3. Run commands on it:
+Apps that support SSH (`ucloud apps show <name> <version>` says — `pytorch-te`
+doesn't) can set `ssh_enabled = true` and be entered directly:
 
 ```bash
 uv run ucloud jobs ssh xxxx                      # interactive shell
@@ -197,7 +202,7 @@ uv run ucloud jobs create my-job.toml -m /12347837/data:ro
 
 Uploads use the provider's `WEBSOCKET_V2` streaming protocol; downloads are a
 direct GET; both run many files concurrently. `-m/--mount` is repeatable (add
-`:ro` for read-only). See [Files and storage](docs/files-and-storage.md).
+`:ro` for read-only). See [Files and storage](docs/guides/files-and-storage.md).
 
 ### Batch jobs, code sync, and a job queue (the Slurm feeling)
 
@@ -232,7 +237,7 @@ uv run ucloud q ls && uv run ucloud q logs base
 Stopping the daemon never harms running jobs — they're normal UCloud jobs, and
 batch jobs still self-terminate. Iterate on code inside a live job with real
 rsync: `ucloud jobs rsync <id> ./src/ /work/unet/src/`. See
-[Queue & batch workflows](docs/queue-and-batch.md).
+[Queue & batch workflows](docs/guides/queue-and-batch.md).
 
 ### Inspect an application's parameters
 

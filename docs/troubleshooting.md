@@ -4,12 +4,12 @@
 
 The CLI can't find credentials. Either run `ucloud login`, set
 `UCLOUD_REFRESH_TOKEN`, or create a `.env` file. See
-[Configuration](configuration.md).
+[Configuration](guides/configuration.md).
 
 ## "UCloud rejected the refresh token (expired or invalid)"
 
 Your refresh token has expired or is wrong. Repeat the browser step in
-[Authentication](authentication.md) and run `ucloud login` with a fresh token.
+[Authentication](guides/authentication.md) and run `ucloud login` with a fresh token.
 
 ## `whoami` works, but a job command returns an API error
 
@@ -27,6 +27,13 @@ Your refresh token has expired or is wrong. Repeat the browser step in
   busy; raise `--timeout`, or use `--no-wait` and poll with `ucloud jobs status`.
 - `JobFailedError` — it entered a terminal state (e.g. `FAILURE`, `EXPIRED`)
   before running. Check the job in the GUI for the failure reason.
+
+## "This application does not support SSH but it is required"
+
+The spec sets `ssh_enabled = true` on an app that has no SSH support at all
+(many batch apps, e.g. `pytorch-te`). Remove the line; `ucloud apps show
+<name> <version>` tells you whether an app supports SSH. To watch a run without
+SSH, make it a batch job and use `jobs logs` / `q logs`.
 
 ## "No SSH endpoint for this job"
 

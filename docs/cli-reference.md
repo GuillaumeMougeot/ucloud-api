@@ -25,7 +25,7 @@ ucloud --help
 
 ## `ucloud login`
 
-Store a refresh token (see [Authentication](authentication.md)).
+Store a refresh token (see [Authentication](guides/authentication.md)).
 
 ```bash
 echo 'TOKEN' | uv run ucloud login          # from stdin (recommended)
@@ -81,7 +81,7 @@ projects and the list changes with your allocations.
 ```bash
 uv run ucloud products                       # what you can actually launch here
 uv run ucloud products --all                 # the whole deployment catalog
-uv run ucloud products --provider aau        # filter to one provider
+uv run ucloud products --provider ucloud     # filter to one provider
 ```
 
 ## `ucloud quota`
@@ -116,7 +116,8 @@ uv run ucloud apps search jupyter --limit 50
 
 ## `ucloud apps show <name> <version>`
 
-Show the parameters an application accepts, including which are required and the
+Show whether the application supports SSH (`ssh_enabled = true` is rejected by
+apps that don't), and the parameters it accepts — which are required, and the
 spec `type` to use for each.
 
 ```bash
@@ -137,13 +138,13 @@ uv run ucloud jobs create my-job.toml -m /959294/ref:ro        # read-only mount
 ```
 
 `--mount` / `-m` is repeatable; append `:ro` for read-only. See
-[Files and storage](files-and-storage.md). For the TOML schema see
-[Configuration → spec file format](configuration.md#job-spec-files).
+[Files and storage](guides/files-and-storage.md). For the TOML schema see
+[Job specs](guides/job-specs.md).
 
 Specs may also carry `[sync]`, `[setup]` and `[schedule]` sections — then
 `jobs create` pushes your working tree, prepares the environment, and (with
 `run`) submits a batch job that ends when the command exits. See
-[Queue & batch workflows](queue-and-batch.md).
+[Queue & batch workflows](guides/queue-and-batch.md).
 
 ## `ucloud jobs list`
 
@@ -223,7 +224,7 @@ uv run ucloud sync push . /12347837/repos/unet  # explicit local + remote
 ## `ucloud q …` — the job queue
 
 Queue jobs with dependencies, quota gating, and auto-extend. Full guide:
-[Queue & batch workflows](queue-and-batch.md).
+[Queue & batch workflows](guides/queue-and-batch.md).
 
 ```bash
 uv run ucloud q submit train.toml --name base       # launches when quota allows
@@ -240,7 +241,7 @@ uv run ucloud q clear                               # sweep finished records
 When to use which: `q submit` when anything should happen *after* submission
 (dependencies, auto-extend, waiting for quota); `jobs create` for one-shot jobs
 you watch yourself. Same spec file, same pipeline, same log location — see
-[jobs create vs q submit](queue-and-batch.md#jobs-create-vs-q-submit).
+[jobs create vs q submit](guides/queue-and-batch.md#jobs-create-vs-q-submit).
 
 ## `ucloud ssh-keys add <public_key_file>`
 

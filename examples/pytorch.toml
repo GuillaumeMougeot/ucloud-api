@@ -11,7 +11,9 @@
 
 name = "pytorch-demo"          # optional, free-form job name
 replicas = 1
-ssh_enabled = true              # required for `ucloud jobs ssh` to work
+ssh_enabled = true              # ONLY if the app supports SSH — `ucloud apps show
+                                # <name> <version>` says; pytorch-te e.g. does NOT,
+                                # and would reject the job. Remove the line then.
 
 [application]
 name = "pytorch-te"

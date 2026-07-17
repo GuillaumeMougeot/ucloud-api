@@ -1,10 +1,11 @@
 # Tutorial 1: your first GPU job
 
-Goal: start a PyTorch GPU job from the terminal, wait for it to run, and execute
-`nvidia-smi` on it over SSH — without opening the web GUI.
+Goal: run `nvidia-smi` on a UCloud GPU from your terminal and read its output
+back — proving your token, project, product, and app all work. About five
+minutes, and the job cleans up after itself.
 
-This assumes you've finished [Getting started](../getting-started.md) (installed,
-`ucloud login` works, and an SSH key is registered).
+This assumes you've finished [Getting started](../getting-started.md)
+(installed, `ucloud login` works, project set).
 
 ## Step 1 — find the application
 
@@ -20,94 +21,138 @@ uv run ucloud apps search pytorch
 └────────────┴─────────┴─────────┘
 ```
 
-Note the **Name** and **Version** — here `pytorch-te` and `26.05`.
+Note the **Name** and **Version**. Your deployment may show different versions —
+use what it prints, not what this page prints.
 
-## Step 2 — find a GPU product
+## Step 2 — find a GPU product you have quota for
 
 ```bash
 uv run ucloud products
 ```
 
-You'll see rows like:
+`products` only lists machines your workspace can actually pay for
+(`ucloud quota` shows the allowances). You'll see rows like:
 
 ```
-┃ Provider   ┃ ID                    ┃ Category        ┃ vCPU ┃ Mem (GB) ┃ GPU ┃
-│ aau        │ uc-a100-1-h           │ uc-a100-h       │ …    │ …        │ 1   │
-│ ucloud     │ gpu-nvidia-b200-1-gpu │ gpu-nvidia-b200 │ 48   │ 288      │ 1   │
+┃ Provider ┃ ID                       ┃ Category        ┃ vCPU ┃ Mem (GB) ┃ GPU ┃
+│ ucloud   │ gpu-nvidia-b200-1-gpu    │ gpu-nvidia-b200 │ 48   │ 288      │ 1   │
+│ ucloud   │ gpu-nvidia-b200-1-mig.1g │ gpu-nvidia-b200 │ 6    │ 36       │ 1   │
 ```
 
-Pick one and note its **ID**, **Category**, and **Provider**. Filter to one
-provider with `--provider aau` if the list is long.
+Pick the **smallest GPU** on offer for this hello-world — here the `mig.1g`
+slice (a hardware partition of a B200). Note its **ID**, **Category**, and
+**Provider**.
 
-## Step 3 — write a spec file
+## Step 3 — find your drive
 
-Create `pytorch.toml`. In TOML, scalar keys must come before any `[table]`:
+The job will write its output to a folder on your UCloud drive, so you need the
+drive's id:
+
+```bash
+uv run ucloud files drives
+```
+
+```
+┃ Path      ┃ Title                               ┃ Provider ┃
+│ /12347837 │ Member Files: GuillaumeMougeot#5298 │ ucloud   │
+```
+
+Use your own path (the `/12347837` below) in the next step.
+
+## Step 4 — write the spec
+
+Make an empty folder and put `hello.toml` in it:
+
+```bash
+mkdir hello-ucloud && cd hello-ucloud
+```
 
 ```toml
-name = "pytorch-run"
+name = "hello-gpu"
 replicas = 1
-ssh_enabled = true          # required so you can SSH in
 
 [application]
 name = "pytorch-te"
 version = "26.05"
 
 [product]
-id = "uc-a100-1-h"
-category = "uc-a100-h"
-provider = "aau"
+id = "gpu-nvidia-b200-1-mig.1g"
+category = "gpu-nvidia-b200"
+provider = "ucloud"
 
 [time_allocation]
-hours = 4
-minutes = 0
-seconds = 0
+hours = 1                 # an upper bound — the job ends itself much sooner
+
+[sync]
+local = "."               # this folder, pushed to your drive and mounted
+remote = "/12347837/repos/hello-ucloud"
+
+[setup]
+run = "nvidia-smi"        # batch mode: the job TERMINATES when this exits
 ```
 
-!!! info "Application parameters"
-    Some apps require extra parameters. If `create` complains that a parameter is
-    missing, see [Tutorial 2](02-from-existing-job.md) — exporting a previous run
-    shows you the exact parameter names and how to encode them.
+Two things make this a **batch job**: `[sync]` puts a folder from your machine
+on the drive and mounts it into the job, and `[setup] run` is a command whose
+exit *ends the job*. No idle GPU if you walk away, nothing to remember to
+terminate.
 
-## Step 4 — create the job and wait
+!!! note "Why not SSH in and type `nvidia-smi` myself?"
+    Not every app allows SSH — `pytorch-te` doesn't (`ucloud apps show
+    pytorch-te 26.05` tells you). Batch mode works everywhere, and for real
+    training runs it's what you want anyway.
+
+## Step 5 — create it
 
 ```bash
-uv run ucloud jobs create pytorch.toml --wait
+uv run ucloud jobs create hello.toml --wait
 ```
 
 ```
-Submitted job 5470001
+synced 1 file(s) to /12347837/repos/hello-ucloud (0 unchanged)
+setup script -> /12347837/repos/hello-ucloud/.ucloud/hello-gpu-setup.sh (wired to 'batchScript')
+Submitted job 12356702
+follow the run: ucloud jobs logs hello.toml
 state -> IN_QUEUE
 state -> RUNNING
-Job 5470001 is RUNNING.
-Connect with: ssh ucloud@ssh.cloud.sdu.dk -p 3421
+Job 12356702 is RUNNING.
 ```
 
-`--wait` polls until the job is `RUNNING` (or fails / times out). Use
-`--timeout <seconds>` to change how long it waits, or `--no-wait` to return
-immediately.
+## Step 6 — read the output
 
-## Step 5 — run commands on it
+The run's output is written to the drive as it happens:
 
 ```bash
-uv run ucloud jobs ssh 5470001 -c "nvidia-smi"     # one-off command
-uv run ucloud jobs ssh 5470001                      # interactive shell
+uv run ucloud jobs logs hello.toml
 ```
 
-If you need a specific key: `-i ~/.ssh/id_ed25519`.
+```
++ nvidia-smi
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 580.xx    Driver Version: 580.xx    CUDA Version: 13.0           |
+| ...                                                                         |
+|   0  NVIDIA B200 MIG 1g.23gb  ...                                          |
++-----------------------------------------------------------------------------+
+```
 
-## Step 6 — clean up
+There's your GPU. And because `nvidia-smi` exited, **the job is already
+terminating itself** — check with `ucloud jobs list` if you like.
+
+## Step 7 — clean up (optional)
+
+The job is gone on its own. The only leftover is the synced folder on the drive:
 
 ```bash
-uv run ucloud jobs status 5470001
-uv run ucloud jobs terminate 5470001
+uv run ucloud files rm /12347837/repos/hello-ucloud
 ```
 
 ## What you learned
 
-- `apps search` and `products` replace hunting for magic strings in the GUI.
-- A job is fully described by a small TOML spec.
-- `jobs create --wait` + `jobs ssh` gives you a hands-off launch-and-connect loop
-  you can put in a script.
+- `apps search`, `products`, and `files drives` replace hunting for magic
+  strings in the GUI.
+- A job is fully described by a small TOML spec — see the
+  [Job specs guide](../guides/job-specs.md) for every field.
+- `[sync]` + `[setup] run` make a **batch job**: code goes in, output comes
+  back via `jobs logs`, and the job ends itself.
 
-Next: [re-run an existing job](02-from-existing-job.md) to skip writing specs by
-hand.
+Next: [a training run that manages itself](02-training-run.md) — the same
+ideas, on a real project, with a queue watching the clock for you.

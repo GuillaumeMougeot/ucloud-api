@@ -5,7 +5,9 @@ eScience Center platform in Denmark) from a terminal — no web GUI required.
 
 UCloud's web app is just a single-page frontend over a documented REST API.
 `ucloud-api` talks to that API directly, so you can start a job, wait for it to
-run, and `ssh` into it from a **headless server**, a script, or CI.
+run, and collect its output from a **headless server**, a script, or CI — plus
+the things the API alone doesn't give you: a job queue with dependencies,
+incremental code sync, and automatic time extension.
 
 !!! note "Unofficial"
     Not affiliated with SDU eScience Center. It uses the same public API the web
@@ -17,35 +19,51 @@ run, and `ssh` into it from a **headless server**, a script, or CI.
 ```
  laptop browser  ──(one time)──►  refresh token string  ──►  headless server
                                                               │
-                     ucloud login / jobs create / jobs ssh  ◄─┘
+                       ucloud login / q submit / q logs   ◄──┘
 ```
 
 You extract **one long-lived refresh token** from a browser session *once* (on
-any laptop), copy that string to your server, and from then on everything is API
-+ SSH. No browser ever runs on the machine that launches jobs.
-
-## Where to go next
-
-| I want to… | Read |
-| --- | --- |
-| Install it and authenticate | [Getting started](getting-started.md) |
-| Understand the token / headless login | [Authentication](authentication.md) |
-| Launch my first GPU job end to end | [Tutorial 1: your first GPU job](tutorials/01-first-gpu-job.md) |
-| Re-run a job I already started in the GUI | [Tutorial 2: from an existing job](tutorials/02-from-existing-job.md) |
-| Automate jobs from Python | [Tutorial 3: the Python library](tutorials/03-python-library.md) |
-| Run a full dataset → training → results loop | [Tutorial 4](tutorials/04-dataset-training-results.md) |
-| Browse, upload, download, and mount files | [Files and storage](files-and-storage.md) |
-| Queue jobs, sync code, batch runs, auto-extend | [Queue & batch workflows](queue-and-batch.md) |
-| Look up a command | [CLI reference](cli-reference.md) |
-| Configure tokens / env vars | [Configuration](configuration.md) |
-| Understand what it does under the hood | [How it works](how-it-works.md) |
-| Fix an error | [Troubleshooting](troubleshooting.md) |
+any laptop), copy that string to your server, and from then on everything is
+API calls. No browser ever runs on the machine that launches jobs.
 
 ## Quick taste
 
+A training job that syncs your code, builds its environment, runs, and
+terminates itself:
+
 ```bash
-uv run ucloud apps search pytorch      # find the app name + version
-uv run ucloud products --provider aau  # find a GPU product
-uv run ucloud jobs create my-job.toml --wait
-uv run ucloud jobs ssh <id> -c "nvidia-smi"
+uv run ucloud q submit train.toml --name base    # sync + setup + submit
+uv run ucloud q submit eval.toml --after base    # Slurm's afterok
+uv run ucloud q daemon                           # auto-extend, launch deps
+uv run ucloud q logs base                        # watch the run, no SSH needed
 ```
+
+## Where to go next
+
+**Learning** (step by step):
+
+| | |
+| --- | --- |
+| Install and authenticate | [Getting started](getting-started.md) |
+| Run your first GPU job (~5 min) | [Tutorial 1](tutorials/01-first-gpu-job.md) |
+| A training run that manages itself | [Tutorial 2](tutorials/02-training-run.md) |
+| Drive it from Python | [Tutorial 3](tutorials/03-python-library.md) |
+
+**Guides** (task-oriented):
+
+| | |
+| --- | --- |
+| Write or generate a job spec | [Job specs](guides/job-specs.md) |
+| Queue, dependencies, auto-extend, code sync | [Queue & batch workflows](guides/queue-and-batch.md) |
+| Browse, upload, download, mount files | [Files and storage](guides/files-and-storage.md) |
+| The token model, rotation, security | [Authentication](guides/authentication.md) |
+| Env vars, config files, precedence | [Configuration](guides/configuration.md) |
+
+**Reference & background:**
+
+| | |
+| --- | --- |
+| Look up a command | [CLI reference](cli-reference.md) |
+| What it does under the hood | [How it works](how-it-works.md) |
+| Fix an error | [Troubleshooting](troubleshooting.md) |
+| Hack on it | [Contributing](contributing.md) |

@@ -28,18 +28,20 @@ theme:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
-  - Authentication: authentication.md
   - Tutorials:
       - 1. Your first GPU job: tutorials/01-first-gpu-job.md
-      - 2. From an existing job: tutorials/02-from-existing-job.md
+      - 2. A training run that manages itself: tutorials/02-training-run.md
       - 3. The Python library: tutorials/03-python-library.md
-      - 4. Dataset → training → results: tutorials/04-dataset-training-results.md
-  - Files and storage: files-and-storage.md
-  - Queue & batch workflows: queue-and-batch.md
+  - Guides:
+      - Job specs: guides/job-specs.md
+      - Queue & batch workflows: guides/queue-and-batch.md
+      - Files and storage: guides/files-and-storage.md
+      - Authentication: guides/authentication.md
+      - Configuration: guides/configuration.md
   - CLI reference: cli-reference.md
-  - Configuration: configuration.md
   - How it works: how-it-works.md
   - Troubleshooting: troubleshooting.md
+  - Contributing: contributing.md
 
 markdown_extensions:
   - admonition

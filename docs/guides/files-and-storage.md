@@ -142,7 +142,7 @@ the spec.
 
 Some applications take a *file* or *directory* as an input **parameter** (not a
 mount) — for example an init script. Check with
-[`ucloud apps show`](cli-reference.md#ucloud-apps-show-name-version), then set it
+[`ucloud apps show`](../cli-reference.md#ucloud-apps-show-name-version), then set it
 in `[parameters.*]`:
 
 ```toml

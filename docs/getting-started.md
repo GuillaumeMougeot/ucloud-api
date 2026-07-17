@@ -49,7 +49,7 @@ uv run ucloud --help
 `ucloud-api` needs a **refresh token** — a long-lived string it exchanges for
 short-lived access tokens. You grab it once from a browser (on any machine) and
 hand it to the CLI. Full details and the security model are in
-[Authentication](authentication.md); the short version:
+[Authentication](guides/authentication.md); the short version:
 
 1. Log in to <https://cloud.sdu.dk> in your browser.
 2. Open DevTools → **Application** → **Cookies** → `https://cloud.sdu.dk`, and

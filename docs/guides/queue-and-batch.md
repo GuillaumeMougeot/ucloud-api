@@ -40,7 +40,8 @@ between the two commands freely; `--mount/-m` works identically on both.
 ## The extended spec file
 
 Three optional sections turn a plain job spec into a full workflow. They are
-consumed by the tool and never sent to the API:
+consumed by the tool and never sent to the API. (This page covers what they
+*do*; the full spec syntax lives in [Job specs](job-specs.md).)
 
 ```toml
 name = "train-unet"

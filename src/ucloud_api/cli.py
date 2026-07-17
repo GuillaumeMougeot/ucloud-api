@@ -566,12 +566,21 @@ def apps_show(
 ) -> None:
     """Show the parameters an application accepts (to build a spec)."""
     with _client() as client:
-        parameters = Catalog(client).app_parameters(name, version)
-    if not parameters:
+        details = Catalog(client).app_details(name, version)
+    if details.supports_ssh:
+        console.print(
+            f"SSH: [green]supported[/] ({details.ssh_mode}) — `ssh_enabled = true` works."
+        )
+    else:
+        console.print(
+            "SSH: [yellow]not supported[/] — `ssh_enabled = true` would be rejected; "
+            "use batch mode + `jobs logs` instead."
+        )
+    if not details.parameters:
         console.print(f"[yellow]No parameters found[/] for {name}@{version}.")
         return
     table = Table("Parameter", "Required", "Spec type", "Title")
-    for p in parameters:
+    for p in details.parameters:
         table.add_row(
             p.name,
             "[red]yes[/]" if not p.optional else "no",

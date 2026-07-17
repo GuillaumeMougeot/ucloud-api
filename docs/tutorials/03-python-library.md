@@ -16,9 +16,10 @@ with UCloudClient() as client:            # reads credentials from env / config
 
     spec = JobSpecification(
         application=NameAndVersion(name="pytorch-te", version="26.05"),
-        product=ComputeProduct(id="uc-a100-1-h", category="uc-a100-h", provider="aau"),
+        product=ComputeProduct(
+            id="gpu-nvidia-b200-1-mig.1g", category="gpu-nvidia-b200", provider="ucloud"
+        ),
         name="pytorch-run",
-        ssh_enabled=True,
         time_allocation=SimpleDuration(hours=4),
         parameters={
             # only if the app needs them; see params helpers below
@@ -30,8 +31,7 @@ with UCloudClient() as client:            # reads credentials from env / config
     print("submitted", job_id)
 
     jobs.wait_until_running(job_id, timeout=900)
-    endpoint = jobs.ssh_endpoint(job_id)
-    print("ssh:", endpoint.command if endpoint else "not advertised yet")
+    print("running:", job_id)
 ```
 
 !!! note "Credentials in scripts"
@@ -42,10 +42,14 @@ with UCloudClient() as client:            # reads credentials from env / config
 
 ## Running commands over SSH
 
+Only for apps that support SSH (`Catalog(client).app_details(...).supports_ssh`
+— `pytorch-te` does not) and specs with `ssh_enabled=True`:
+
 ```python
 from ucloud_api import SSHRunner
 
-runner = SSHRunner(endpoint)                       # from jobs.ssh_endpoint(...)
+endpoint = jobs.ssh_endpoint(job_id)
+runner = SSHRunner(endpoint)
 result = runner.run("nvidia-smi", capture_output=True)
 print(result.stdout)
 ```
@@ -77,7 +81,7 @@ with UCloudClient() as client:
     cat = Catalog(client)
     for app in cat.search_apps("pytorch"):
         print(app.name, app.version, app.title)
-    for p in cat.products(provider="aau"):
+    for p in cat.products(usable_only=True):  # only what your workspace has quota for
         print(p.provider, p.id, p.category, "gpu=", p.gpu)
 ```
 
