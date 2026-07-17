@@ -56,6 +56,53 @@ class AppParameter:
         return _APP_PARAM_TO_SPEC_TYPE.get(self.type, "text")
 
 
+@dataclass(slots=True)
+class AppDetails:
+    """One application version: its parameters and whether it can do SSH."""
+
+    name: str
+    version: str
+    parameters: list[AppParameter]
+    #: ``OPTIONAL`` / ``MANDATORY`` / ``DISABLED``; ``None`` when the app has no
+    #: SSH support at all (most batch apps, e.g. pytorch-te).
+    ssh_mode: str | None
+
+    @property
+    def supports_ssh(self) -> bool:
+        """Whether ``ssh_enabled = true`` is accepted; otherwise create returns 400."""
+        return self.ssh_mode is not None and self.ssh_mode != "DISABLED"
+
+    @property
+    def script_param(self) -> str | None:
+        """The parameter to hand a generated setup script to, if the app takes one.
+
+        ``batchScript`` first: with it UCloud ends the job when the script exits,
+        which is what makes a batch run self-terminating.
+        """
+        names = {p.name for p in self.parameters if p.spec_type == "file"}
+        for preferred in ("batchScript", "initScript"):
+            if preferred in names:
+                return preferred
+        return None
+
+
+def _read_parameters(invocation: dict[str, Any]) -> list[AppParameter]:
+    """Parse ``invocation.parameters`` from GET /api/hpc/apps/byNameAndVersion."""
+    results: list[AppParameter] = []
+    for p in invocation.get("parameters", []) or []:
+        results.append(
+            AppParameter(
+                name=str(p.get("name", "?")),
+                type=str(p.get("type", "?")),
+                optional=bool(p.get("optional", False)),
+                title=str(p.get("title", "") or ""),
+                description=str(p.get("description", "") or ""),
+                default=p.get("defaultValue"),
+            )
+        )
+    return results
+
+
 #: Maps an application-parameter type (from the catalog) to the tagged
 #: AppParameterValue ``type`` you write in a spec file.
 _APP_PARAM_TO_SPEC_TYPE = {
@@ -172,31 +219,26 @@ class Catalog:
         results.sort(key=lambda g: (g.category.lower(), g.title.lower()))
         return results
 
-    def app_parameters(self, name: str, version: str) -> list[AppParameter]:
-        """List the parameters an application accepts.
-
-        GET /api/hpc/apps/byNameAndVersion; parameters live under
-        ``invocation.parameters``.
-        """
+    def app_details(self, name: str, version: str) -> AppDetails:
+        """Everything a spec needs to know about one application version."""
         data = self._client.get(
             f"{_APPS_BASE}/byNameAndVersion",
             params={"appName": name, "appVersion": version},
         )
         invocation = data.get("invocation", {}) if isinstance(data, dict) else {}
-        params = invocation.get("parameters", []) or []
-        results: list[AppParameter] = []
-        for p in params:
-            results.append(
-                AppParameter(
-                    name=str(p.get("name", "?")),
-                    type=str(p.get("type", "?")),
-                    optional=bool(p.get("optional", False)),
-                    title=str(p.get("title", "") or ""),
-                    description=str(p.get("description", "") or ""),
-                    default=p.get("defaultValue"),
-                )
-            )
-        return results
+        ssh = invocation.get("ssh")
+        return AppDetails(
+            name=name,
+            version=version,
+            parameters=_read_parameters(invocation),
+            # Absent/null means the app has no SSH support at all — passing
+            # ssh_enabled to one of those is rejected outright at create time.
+            ssh_mode=str(ssh.get("mode")) if isinstance(ssh, dict) and ssh.get("mode") else None,
+        )
+
+    def app_parameters(self, name: str, version: str) -> list[AppParameter]:
+        """List the parameters an application accepts."""
+        return self.app_details(name, version).parameters
 
     def wallets(self) -> list[Wallet]:
         """List the active workspace's allocations (GET …/accounting/v2/browseWallets).

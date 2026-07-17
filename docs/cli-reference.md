@@ -45,6 +45,26 @@ expired, you're prompted for a fresh one; `--reauth` forces that prompt.
 
 Verify authentication and print the deployment + credentials path.
 
+## `ucloud init`
+
+Scaffold `ucloud/job.toml` + `ucloud/setup.sh` for the project in the current
+directory. Values are read from your workspace, not left as placeholders: your
+drive, a single-GPU product you have quota for, the newest PyTorch version, which
+script parameter the app takes, and whether it will accept `ssh_enabled`.
+
+```bash
+uv run ucloud init                              # scaffold for the cwd
+uv run ucloud init --product cpu-amd-zen5-8-vcpu --app pytorch-te
+uv run ucloud init --drive 12347837 --force     # overwrite existing files
+```
+
+Then point `run` at your training command and `ucloud q submit ucloud/job.toml`.
+
+Deliberately narrow: it scaffolds **Python + uv batch jobs** and refuses anything
+else rather than emitting a template that cannot work. For other app types, copy
+[`examples/pytorch.toml`](https://github.com/GuillaumeMougeot/ucloud-api/blob/main/examples/pytorch.toml)
+or seed from a job you already ran with `ucloud jobs show <id> -o spec.toml`.
+
 ## `ucloud projects`
 
 List the projects you belong to (id + title), marking the active one. Set the

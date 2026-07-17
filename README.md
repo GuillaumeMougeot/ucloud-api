@@ -115,6 +115,26 @@ uv run ucloud ssh-keys list
 
 (You can also do this in the GUI under *Resources → SSH Keys* — same thing.)
 
+### Start from a scaffold
+
+In a Python project, let `init` fill in the spec from your actual workspace —
+drive, a GPU you have quota for, the newest PyTorch, and whether the app takes
+SSH:
+
+```console
+$ uv run ucloud init
+demo-trainer — python project
+ drive    /12347837  (Member Files: GuillaumeMougeot#5298)
+ product  gpu-nvidia-b200-1-gpu  (48 vCPU, 288 GB, 1 GPU)
+ app      pytorch-te 26.05  (batchScript, ssh=unsupported)
+ code     /12347837/repos/demo-trainer -> /work/demo-trainer
+wrote ucloud/job.toml
+wrote ucloud/setup.sh
+```
+
+Point `run` at your training command and submit. It scaffolds Python + uv batch
+jobs only; for anything else, see the next section.
+
 ### Find the app + product you want (no DevTools needed)
 
 ```bash

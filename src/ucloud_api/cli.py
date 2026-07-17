@@ -26,7 +26,7 @@ from rich.progress import (
 from rich.table import Table
 
 from .auth import Authenticator
-from .catalog import Catalog
+from .catalog import AppSummary, Catalog
 from .client import UCloudClient
 from .config import DEFAULT_BASE_URL, Credentials, credentials_path, load_credentials
 from .exceptions import APIError, AuthError, UCloudError
@@ -36,6 +36,7 @@ from .jobs import Jobs, SSHKeys, specification_to_spec_dict
 from .launch import Launcher, working_tree_selector
 from .models import JobSpecification, JobState
 from .params import file as file_param
+from .scaffold import Plan, detect_project, pick_app, pick_drive, pick_product, write_files
 from .shell import FilesShell
 from .spec import LaunchSpec, SyncSpec, load_launch_spec
 from .ssh import SSHRunner
@@ -773,6 +774,89 @@ def quota() -> None:
     console.print(table)
     where = f"project {active}" if active else "My workspace (personal)"
     console.print(f"[dim]Workspace: {where}. Switch with `ucloud login --project <id>`.[/]")
+
+
+@app.command()
+def init(
+    directory: Annotated[
+        Path, typer.Argument(help="Project root to scaffold for (default: cwd).")
+    ] = Path(),
+    drive: Annotated[
+        str | None, typer.Option("--drive", help="Drive id, e.g. 12347837. Default: your first.")
+    ] = None,
+    product: Annotated[
+        str | None, typer.Option("--product", help="Product id. Default: a single-GPU machine.")
+    ] = None,
+    application: Annotated[
+        str | None, typer.Option("--app", help="Application name. Default: the newest PyTorch.")
+    ] = None,
+    force: Annotated[bool, typer.Option("--force", help="Overwrite existing files.")] = False,
+) -> None:
+    """Scaffold ucloud/job.toml + ucloud/setup.sh for this project.
+
+    Reads your workspace so the spec has real values (drive, product, app version,
+    script parameter, SSH support) rather than placeholders.
+    """
+    root = directory.resolve()
+    project = detect_project(root)
+    with _client() as client:
+        catalog = Catalog(client)
+        chosen_drive = pick_drive(Files(client).list_drives(), drive)
+        chosen_product = pick_product(catalog.products(usable_only=True), product)
+        chosen_app = pick_app(_launchable_apps(catalog), application)
+        details = catalog.app_details(chosen_app.name, chosen_app.version)
+
+    if details.script_param is None:
+        raise UCloudError(
+            f"{chosen_app.name} {chosen_app.version} takes no batchScript/initScript "
+            "parameter, so there is nothing to attach a setup script to. Pick another "
+            "app with --app (see `ucloud apps list`)."
+        )
+    plan = Plan(
+        project=project,
+        drive=chosen_drive,
+        product=chosen_product,
+        app=chosen_app,
+        details=details,
+        remote=f"{chosen_drive.path}/repos/{project.name}",
+    )
+    written = write_files(plan, root / "ucloud", force=force)
+
+    console.print(
+        f"[bold]{project.name}[/] — python project"
+        f"{', uv' if project.uses_uv else ''}{', git' if project.is_git else ''}"
+    )
+    table = Table("", "", box=None, show_header=False)
+    table.add_row("drive", f"{chosen_drive.path}  ({chosen_drive.title})")
+    table.add_row(
+        "product",
+        f"{chosen_product.id}  ({chosen_product.cpu} vCPU, "
+        f"{chosen_product.memory_gb} GB, {chosen_product.gpu or 0} GPU)",
+    )
+    table.add_row(
+        "app",
+        f"{chosen_app.name} {chosen_app.version}  "
+        f"({details.script_param}, ssh={details.ssh_mode or 'unsupported'})",
+    )
+    table.add_row("code", f"{plan.remote} -> {plan.in_job_path}")
+    console.print(table)
+    for path in written:
+        console.print(f"[green]wrote[/] {path.relative_to(root)}")
+    console.print(
+        f"\nNext: point [bold]run[/] in ucloud/job.toml at your training command, then\n"
+        f"  [bold]ucloud q submit ucloud/job.toml --name {project.name}[/]"
+    )
+
+
+def _launchable_apps(catalog: Catalog) -> list[AppSummary]:
+    """Catalog groups give names; `search_apps` is what resolves a name to versions."""
+    summaries: list[AppSummary] = []
+    for group in catalog.list_apps():
+        if not group.name:
+            continue
+        with contextlib.suppress(APIError):
+            summaries.extend(catalog.search_apps(group.name, limit=5))
+    return summaries
 
 
 def _format_quantity(value: float) -> str:
