@@ -44,7 +44,11 @@ _FILES_BASE = "/api/files"
 DEFAULT_CONCURRENCY = 8
 DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MiB
 _WS_CHUNK_SIZE = 1024 * 1024  # 1 MiB frames over the websocket
-_CONTROL_BATCH = 200  # files per createUpload/createDownload request
+# Files per createUpload/createDownload request. The SDU gateway has a fixed read
+# timeout on this call (observed ~5s) that scales with batch size: 120 items took
+# ~4.9s and succeeded, 130 took the same wall clock and consistently 502'd (not
+# flaky — every retry hit the same timeout). Kept well under that cliff.
+_CONTROL_BATCH = 64
 _UPLOAD_PROTOCOLS = ["WEBSOCKET_V2", "CHUNKED"]
 
 # WEBSOCKET_V2 message opcodes (see UCloud upload/message.go).
