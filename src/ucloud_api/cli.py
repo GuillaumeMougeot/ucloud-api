@@ -1112,7 +1112,9 @@ def q_daemon(
     queue = Queue()
     try:
         while True:
-            _run_tick(queue)
+            # Non-blocking: a live `q submit`/`q tick` has priority on any record
+            # it's touching. We just skip it this cycle and pick it up next time.
+            _run_tick(queue, blocking=False)
             if until_idle and not any(not r.status.is_terminal for r in queue.all()):
                 console.print("[dim]queue idle — exiting[/]")
                 return
@@ -1167,9 +1169,9 @@ def q_logs(name: Annotated[str, typer.Argument(help="Queue name (see `q ls`).")]
     _print_run_log(record.launch_spec(), name)
 
 
-def _run_tick(queue: Queue | None = None) -> None:
+def _run_tick(queue: Queue | None = None, *, blocking: bool = True) -> None:
     with _client() as client:
-        events = Scheduler(client, queue).tick()
+        events = Scheduler(client, queue).tick(blocking=blocking)
     stamp = datetime.now().astimezone().strftime("%H:%M:%S")
     for event in events:
         console.print(f"[dim]{stamp}[/] {event}")

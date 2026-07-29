@@ -21,9 +21,12 @@ A tick:
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -133,6 +136,34 @@ class Queue:
                 raise UCloudError(f"--after {dep!r}: no queued job with that name.")
         self.save(record)
 
+    @contextlib.contextmanager
+    def lock(self, name: str, *, blocking: bool) -> Iterator[bool]:
+        """Exclusive per-record lock, guarding one record across processes.
+
+        `q submit`/`q tick` are user-initiated and block until they get it, so
+        they never silently lose work to a concurrently running daemon. `q
+        daemon` acquires non-blocking: if a live submission already holds the
+        record, the daemon just skips it for this cycle instead of racing —
+        it'll pick it up next time round. Without this, both could run the
+        same record's submit/refresh at once and whichever saved last would
+        clobber the other's result.
+        """
+        lock_path = self.dir / f"{name}.lock"
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+            try:
+                fcntl.flock(fd, flags)
+            except BlockingIOError:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
 
 class Scheduler:
     """Advances the queue one tick at a time. Stateless between ticks."""
@@ -144,20 +175,63 @@ class Scheduler:
         self._launcher = Launcher(client)
         self._usable_categories: set[tuple[str, str]] | None = None  # per-tick cache
 
-    def tick(self) -> list[str]:
-        """Reconcile + extend + submit. Returns human-readable event lines."""
+    def tick(self, *, blocking: bool = True) -> list[str]:
+        """Reconcile + extend + submit. Returns human-readable event lines.
+
+        ``blocking`` controls priority when this tick and another process's
+        tick reach the same record at once: ``q submit``/``q tick`` (default)
+        wait for it, so a user-initiated action never loses to a background
+        one. ``q daemon`` passes ``blocking=False`` and skips a contended
+        record for this cycle rather than racing a live submission.
+        """
         self._usable_categories = None
         events: list[str] = []
         records = self._queue.all()
         by_name = {r.name: r for r in records}
 
+        submittable = (QueueStatus.SUBMITTED, QueueStatus.RUNNING)
         for record in records:
-            if record.status in (QueueStatus.SUBMITTED, QueueStatus.RUNNING):
-                events += self._refresh(record)
+            if record.status in submittable:
+                events += self._locked(
+                    record, by_name, blocking, lambda r: r.status in submittable, self._refresh
+                )
         for record in records:
             if record.status is QueueStatus.QUEUED:
-                events += self._maybe_submit(record, by_name)
+                events += self._locked(
+                    record,
+                    by_name,
+                    blocking,
+                    lambda r: r.status is QueueStatus.QUEUED,
+                    lambda r: self._maybe_submit(r, by_name),
+                )
         return events
+
+    def _locked(
+        self,
+        record: QueueRecord,
+        by_name: dict[str, QueueRecord],
+        blocking: bool,
+        still_valid: Callable[[QueueRecord], bool],
+        action: Callable[[QueueRecord], list[str]],
+    ) -> list[str]:
+        """Run ``action`` on ``record`` while holding its lock.
+
+        Re-reads the record after acquiring the lock: another process may have
+        changed (or deleted) it while this one waited, so the snapshot taken
+        at the top of ``tick()`` can be stale by the time the lock is ours.
+        ``action`` mutates its argument in place before saving it (the existing
+        ``_refresh``/``_maybe_submit`` contract), so ``by_name`` is repointed at
+        the fresh, now-updated record — a dependent processed later in the same
+        tick must see this record's new status, not the pre-lock snapshot.
+        """
+        with self._queue.lock(record.name, blocking=blocking) as acquired:
+            if not acquired:
+                return []
+            fresh = self._queue.get(record.name)
+            if fresh is None or not still_valid(fresh):
+                return []
+            by_name[record.name] = fresh
+            return action(fresh)
 
     # -- reconcile a submitted/running record -------------------------------- #
 

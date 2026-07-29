@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,41 @@ def test_queue_rejects_duplicate_names(tmp_path: Path) -> None:
 def test_queue_rejects_unknown_dependency(tmp_path: Path) -> None:
     with pytest.raises(UCloudError, match="no queued job"):
         Queue(tmp_path).add(_record("b", after=["missing"]))
+
+
+# -- record locking (submit vs. daemon priority) ------------------------------ #
+
+
+def test_lock_nonblocking_skips_when_already_held(tmp_path: Path) -> None:
+    queue = Queue(tmp_path)
+    with queue.lock("a", blocking=True) as outer:
+        assert outer is True
+        with queue.lock("a", blocking=False) as inner:
+            assert inner is False  # daemon-style: back off instead of waiting
+
+
+def test_lock_blocking_waits_for_release(tmp_path: Path) -> None:
+    queue = Queue(tmp_path)
+    held = threading.Event()
+    release_after = 0.2
+
+    def hold_then_release() -> None:
+        with queue.lock("a", blocking=True):
+            held.set()
+            time.sleep(release_after)
+
+    t = threading.Thread(target=hold_then_release)
+    t.start()
+    held.wait(timeout=2)
+
+    start = time.monotonic()
+    with queue.lock("a", blocking=True) as acquired:
+        elapsed = time.monotonic() - start
+    t.join()
+
+    assert acquired is True
+    # Got it only after the holder released, not immediately.
+    assert elapsed >= release_after * 0.5
 
 
 # -- scheduler ---------------------------------------------------------------- #
@@ -277,6 +313,47 @@ def test_tick_respects_max_time_cap(tmp_path: Path) -> None:
     events = sched.tick()
     assert jobs.extended == []
     assert any("max_time" in e for e in events)
+
+
+def test_tick_nonblocking_skips_record_held_by_another_process(tmp_path: Path) -> None:
+    """Simulates the daemon reaching a record a live `q submit` is mid-way through."""
+    launcher = _FakeLauncher()
+    sched, queue = _scheduler(tmp_path, launcher=launcher)
+    queue.add(_record("a"))
+
+    with queue.lock("a", blocking=True):
+        events = sched.tick(blocking=False)  # daemon mode: must not wait or touch "a"
+
+    assert events == []
+    assert launcher.submitted == []
+    rec = queue.get("a")
+    assert rec is not None and rec.status is QueueStatus.QUEUED
+
+
+def test_tick_blocking_waits_for_daemon_to_release_then_submits(tmp_path: Path) -> None:
+    """A user-initiated tick (submit/tick) must still get the record, not give up."""
+    launcher = _FakeLauncher()
+    sched, queue = _scheduler(tmp_path, launcher=launcher)
+    queue.add(_record("a"))
+    release_after = 0.2
+
+    def hold_then_release() -> None:
+        with queue.lock("a", blocking=True):
+            time.sleep(release_after)
+
+    t = threading.Thread(target=hold_then_release)
+    t.start()
+    time.sleep(release_after / 4)  # let the thread grab the lock first
+
+    start = time.monotonic()
+    sched.tick(blocking=True)
+    elapsed = time.monotonic() - start
+    t.join()
+
+    assert elapsed >= release_after * 0.5
+    assert launcher.submitted == ["a"]
+    rec = queue.get("a")
+    assert rec is not None and rec.status is QueueStatus.SUBMITTED
 
 
 def test_record_json_is_readable(tmp_path: Path) -> None:
