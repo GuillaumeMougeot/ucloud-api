@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import httpx
 
+from ._retry import MAX_RETRIES, RETRY_STATUS, backoff_sleep
 from .auth import Authenticator
 from .config import Credentials, load_credentials
 from .exceptions import APIError
-
-#: Transient gateway/upstream errors worth retrying — SDU's gateway intermittently
-#: 502s on control-plane calls (``createUpload`` especially, which fails a whole
-#: ``sync``/job-submit). These are not client errors, so a short backoff usually clears them.
-_RETRY_STATUS = frozenset({502, 503, 504})
-_MAX_RETRIES = 5
 
 
 def _why(resp: httpx.Response) -> str:
@@ -90,8 +84,8 @@ class UCloudClient:
         # calls, which otherwise fails an entire sync / job submit. Retry with exponential
         # backoff (0.5s, 1s, 2s, 4s, 4s). All UCloud control calls here are safe to re-issue.
         attempt = 0
-        while resp.status_code in _RETRY_STATUS and attempt < _MAX_RETRIES:
-            time.sleep(min(2 ** attempt, 8) * 0.5)
+        while resp.status_code in RETRY_STATUS and attempt < MAX_RETRIES:
+            backoff_sleep(attempt)
             attempt += 1
             resp = self._send(method, path, params=params, json=json, force_refresh=False)
         if resp.status_code >= 400:

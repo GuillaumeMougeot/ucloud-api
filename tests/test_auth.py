@@ -59,6 +59,30 @@ def test_refresh_rejects_bad_token(tmp_path) -> None:
 
 
 @respx.mock
+def test_refresh_retries_transient_gateway_errors(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("ucloud_api._retry.time.sleep", lambda _seconds: None)
+    access = _make_jwt(int(time.time()) + 600)
+    respx.post(f"{BASE}/auth/refresh").mock(
+        side_effect=[
+            httpx.Response(502),
+            httpx.Response(503),
+            httpx.Response(200, json={"accessToken": access, "csrfToken": "x"}),
+        ]
+    )
+    auth = Authenticator("refresh-tok", BASE, cache_path=tmp_path / "cache.json")
+    assert auth.access_token() == access
+
+
+@respx.mock
+def test_refresh_gives_up_after_max_retries(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("ucloud_api._retry.time.sleep", lambda _seconds: None)
+    respx.post(f"{BASE}/auth/refresh").mock(return_value=httpx.Response(502))
+    auth = Authenticator("refresh-tok", BASE, cache_path=tmp_path / "cache.json")
+    with pytest.raises(AuthError):
+        auth.access_token()
+
+
+@respx.mock
 def test_expired_cache_triggers_new_refresh(tmp_path) -> None:
     expired = _make_jwt(int(time.time()) - 10)
     fresh = _make_jwt(int(time.time()) + 600)

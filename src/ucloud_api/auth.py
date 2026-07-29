@@ -19,6 +19,7 @@ from typing import cast
 
 import httpx
 
+from ._retry import MAX_RETRIES, RETRY_STATUS, backoff_sleep
 from .config import token_cache_path
 from .exceptions import AuthError
 
@@ -88,10 +89,23 @@ class Authenticator:
 
     def _refresh(self) -> str:
         url = f"{self._base_url}/auth/refresh"
+        headers = {"Authorization": f"Bearer {self._refresh_token}"}
         try:
-            resp = self._http.post(url, headers={"Authorization": f"Bearer {self._refresh_token}"})
+            resp = self._http.post(url, headers=headers)
         except httpx.HTTPError as exc:
             raise AuthError(f"Could not reach UCloud auth endpoint {url}: {exc}") from exc
+
+        # Same gateway, same transient-5xx flakiness as the main request path
+        # (see client.request): every request mints a token first, so an
+        # unretried 502 here fails the whole call before it even starts.
+        attempt = 0
+        while resp.status_code in RETRY_STATUS and attempt < MAX_RETRIES:
+            backoff_sleep(attempt)
+            attempt += 1
+            try:
+                resp = self._http.post(url, headers=headers)
+            except httpx.HTTPError as exc:
+                raise AuthError(f"Could not reach UCloud auth endpoint {url}: {exc}") from exc
 
         if resp.status_code in (401, 403):
             raise AuthError(
