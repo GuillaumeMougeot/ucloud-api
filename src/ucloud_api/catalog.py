@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .client import UCloudClient
+from .client import UCloudClient, iter_browse
 
 _APPS_BASE = "/api/hpc/apps"
 _JOBS_BASE = "/api/jobs"
@@ -246,8 +246,7 @@ class Catalog:
         The ``Project`` header decides whose wallets you see: the active
         project's, or your personal ones in "My workspace".
         """
-        data = self._client.get(f"{_WALLETS_BASE}/browseWallets", params={"itemsPerPage": 250})
-        items = data.get("items", []) if isinstance(data, dict) else []
+        items = iter_browse(self._client, f"{_WALLETS_BASE}/browseWallets")
         results: list[Wallet] = []
         for item in items:
             pays_for = (item or {}).get("paysFor", {})

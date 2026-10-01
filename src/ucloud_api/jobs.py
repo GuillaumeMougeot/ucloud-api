@@ -10,7 +10,7 @@ from typing import Any, cast
 
 from pydantic import TypeAdapter, ValidationError
 
-from .client import UCloudClient
+from .client import UCloudClient, iter_browse
 from .exceptions import APIError, JobFailedError, JobTimeoutError, UCloudError
 from .models import AppParameterValue, JobSpecification, JobState
 
@@ -157,8 +157,7 @@ class SSHKeys:
             raise APIError(f"Unexpected add-ssh-key response: {data!r}") from exc
 
     def list(self) -> list[dict[str, Any]]:
-        data = self._client.get(f"{_SSH_BASE}/browse", params={"itemsPerPage": 250})
-        return data.get("items", []) if isinstance(data, dict) else []
+        return list(iter_browse(self._client, f"{_SSH_BASE}/browse"))
 
 
 #: The only top-level fields we export, mapped to the snake_case keys our spec

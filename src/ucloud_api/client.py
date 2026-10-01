@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -128,3 +129,29 @@ class UCloudClient:
 
     def post(self, path: str, *, json: Any | None = None) -> Any:
         return self.request("POST", path, json=json)
+
+
+def iter_browse(
+    client: UCloudClient,
+    path: str,
+    params: dict[str, Any] | None = None,
+    *,
+    page_size: int = 250,
+) -> Iterator[dict[str, Any]]:
+    """Yield every item of a paginated UCloud ``browse`` endpoint, following ``next``.
+
+    UCloud's browse endpoints return at most ``itemsPerPage`` items plus a continuation token.
+    Reading only the first page is a silent truncation: a directory with 2,050 files listed as
+    250, and a directory download built on that listing skipped the rest without an error.
+    """
+    query = dict(params or {})
+    query["itemsPerPage"] = page_size
+    while True:
+        data = client.get(path, params=query)
+        if not isinstance(data, dict):
+            return
+        yield from data.get("items", []) or []
+        token = data.get("next")
+        if not token:
+            return
+        query["next"] = token

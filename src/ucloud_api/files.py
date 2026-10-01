@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-from .client import UCloudClient
+from .client import UCloudClient, iter_browse
 from .exceptions import APIError
 
 _FILES_BASE = "/api/files"
@@ -54,8 +54,7 @@ class Files:
 
     def list_drives(self) -> list[Drive]:
         """List the drives (file collections) you can access."""
-        data = self._client.get(f"{_DRIVES_BASE}/browse", params={"itemsPerPage": 250})
-        items = data.get("items", []) if isinstance(data, dict) else []
+        items = iter_browse(self._client, f"{_DRIVES_BASE}/browse")
         drives: list[Drive] = []
         for item in items:
             spec = (item or {}).get("specification", {})
@@ -71,8 +70,9 @@ class Files:
 
     def list_path(self, path: str) -> list[FileEntry]:
         """List the entries directly under ``path`` (e.g. ``/12345/project``)."""
-        data = self._client.get(f"{_FILES_BASE}/browse", params={"path": path, "itemsPerPage": 250})
-        items = data.get("items", []) if isinstance(data, dict) else []
+        # Every page: reading only the first 250 silently truncated large directories, and
+        # `walk_files` -- hence directory downloads -- skipped everything past entry 250.
+        items = iter_browse(self._client, f"{_FILES_BASE}/browse", {"path": path})
         entries: list[FileEntry] = []
         for item in items:
             status = (item or {}).get("status", {})

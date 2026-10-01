@@ -76,3 +76,39 @@ def test_apply_mounts_noop_when_empty() -> None:
     spec = _base_spec()
     _apply_mounts(spec, [])
     assert spec.resources is None
+
+
+class _PagedClient:
+    """Serves `items` in pages of `size`, with a `next` token, like UCloud's browse endpoints."""
+
+    def __init__(self, items: list, size: int) -> None:
+        self._items, self._size, self.calls = items, size, []
+
+    def get(self, path, params=None):
+        params = dict(params or {})
+        self.calls.append(params)
+        start = int(params.get("next", 0))
+        page = self._items[start : start + self._size]
+        nxt = start + self._size
+        return {"items": page, "next": str(nxt) if nxt < len(self._items) else None}
+
+
+def test_list_path_reads_every_page() -> None:
+    # The regression: 2,050 entries listed as 250 because only page one was read.
+    items = [{"id": f"/1/part-{i:05d}.parquet", "status": {"type": "FILE"}} for i in range(2050)]
+    client = _PagedClient(items, size=250)
+    entries = Files(client).list_path("/1")  # type: ignore[arg-type]
+    assert len(entries) == 2050
+    assert len(client.calls) == 9
+    assert all(c["path"] == "/1" for c in client.calls)
+    assert client.calls[1]["next"] == "250"
+
+
+def test_walk_files_does_not_truncate_large_directories() -> None:
+    items = [{"id": f"/1/f{i}.jpg", "status": {"type": "FILE"}} for i in range(600)]
+    assert len(list(Files(_PagedClient(items, 250)).walk_files("/1"))) == 600  # type: ignore[arg-type]
+
+
+def test_list_drives_reads_every_page() -> None:
+    items = [{"id": str(i), "specification": {"title": f"d{i}"}} for i in range(300)]
+    assert len(Files(_PagedClient(items, 250)).list_drives()) == 300  # type: ignore[arg-type]

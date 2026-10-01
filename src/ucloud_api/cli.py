@@ -27,7 +27,7 @@ from rich.table import Table
 
 from .auth import Authenticator
 from .catalog import AppSummary, Catalog
-from .client import UCloudClient
+from .client import UCloudClient, iter_browse
 from .config import DEFAULT_BASE_URL, Credentials, credentials_path, load_credentials
 from .exceptions import APIError, AuthError, UCloudError
 from .files import Files
@@ -744,9 +744,8 @@ def files_shell(
 def projects() -> None:
     """List the projects you belong to (use one with `login --project <id>`)."""
     with _client() as client:
-        data = client.get("/api/projects/v2/browse", params={"itemsPerPage": 250})
+        items = list(iter_browse(client, "/api/projects/v2/browse"))
         active = client.project
-    items = data.get("items", []) if isinstance(data, dict) else []
     table = Table("Active", "ID", "Title")
     # "My workspace" (personal) is the default when no project is set — it is not
     # returned by the projects API, so we add it explicitly to make it visible.
