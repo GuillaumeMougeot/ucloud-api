@@ -30,7 +30,7 @@ from .catalog import AppSummary, Catalog
 from .client import UCloudClient, iter_browse
 from .config import DEFAULT_BASE_URL, Credentials, credentials_path, load_credentials
 from .exceptions import APIError, AuthError, UCloudError
-from .files import Files
+from .files import DirUsage, Files
 from .jobqueue import Queue, QueueRecord, QueueStatus, Scheduler
 from .jobs import Jobs, SSHKeys, specification_to_spec_dict
 from .launch import Launcher, run_log_path, working_tree_selector
@@ -629,6 +629,70 @@ def files_ls(
         )
     console.print(table)
     console.print(f"\nMount a folder into a job with: [bold]jobs create spec.toml -m {path}[/]")
+
+
+@files_app.command("du")
+def files_du(
+    path: Annotated[
+        str | None,
+        typer.Argument(help="Folder to measure, e.g. /12345/project (default: every drive)."),
+    ] = None,
+    max_depth: Annotated[
+        int, typer.Option("--max-depth", "-d", help="Show folders down to this depth.")
+    ] = 1,
+    workers: Annotated[int, typer.Option("--jobs", "-j", help="Folders listed in parallel.")] = 16,
+) -> None:
+    """Show how much space folders use, like `du` (walks the tree; large ones take a while)."""
+    with _client() as client, _friendly_errors():
+        files = Files(client)
+        if path is None:
+            targets = [(d.path, d.title) for d in files.list_drives()]
+            max_depth = 0
+        else:
+            targets = [(path, "")]
+        rows: list[tuple[DirUsage, str]] = []
+        errors: list[str] = []
+        with console.status("") as status:
+            for target, title in targets:
+                label = f"{target} {title}".strip()
+                status.update(f"Scanning {label} …")
+
+                def on_dir(n: int, label: str = label) -> None:
+                    status.update(f"Scanning {label} … {n:,} folders")
+
+                try:
+                    usage = files.disk_usage(target, workers=workers, on_dir=on_dir)
+                except APIError:
+                    if path is None:
+                        errors.append(f"{target}: could not be listed")
+                        continue
+                    entry = files.stat(target)
+                    if entry is None or entry.is_dir:
+                        raise
+                    console.print(f"{_format_size(entry.size)}  {entry.path}")
+                    return
+                root = usage[target.rstrip("/") or "/"]
+                errors.extend(root.errors)
+                rows.extend((u, title) for u in usage.values() if 0 < u.depth <= max_depth)
+                rows.append((root, title))
+
+    table = Table("Size", "Files", "Path", *(["Title"] if path is None else []))
+    rows.sort(key=lambda r: r[0].size, reverse=True)
+    for u, title in rows:
+        style = "bold" if u.depth == 0 and path is not None else ""
+        table.add_row(
+            _format_size(u.size),
+            f"{u.files:,}",
+            u.path + ("/" if u.depth else ""),
+            *([title] if path is None else []),
+            style=style,
+        )
+    console.print(table)
+    if path is None:
+        total = sum(u.size for u, _ in rows)
+        console.print(f"Total: [bold]{_format_size(total)}[/] across {len(rows)} drive(s)")
+    for err in errors:
+        err_console.print(f"[yellow]skipped[/] {err}")
 
 
 def _transfer_progress() -> Progress:

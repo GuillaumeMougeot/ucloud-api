@@ -194,6 +194,7 @@ UCloud storage lives on **drives** (paths look like `/<driveId>/folder`):
 ```bash
 uv run ucloud files drives                              # list drives
 uv run ucloud files ls /12347837                        # list a folder
+uv run ucloud files du /12347837                        # folder sizes, like du
 uv run ucloud files upload ./dataset /12347837/dataset  # upload (parallel)
 uv run ucloud files download /12347837/results ./out    # download (parallel)
 uv run ucloud jobs create my-job.toml -m /12347837/project      # mount into a job

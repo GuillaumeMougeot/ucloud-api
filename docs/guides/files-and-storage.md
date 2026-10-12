@@ -50,6 +50,19 @@ uv run ucloud files ls /959294/project
 │ file │ notes.md   │ 2 KB │ 2025-11-20 09:03 │
 ```
 
+
+## See what takes up space
+
+Folder sizes aren't reported by UCloud, so `files du` walks the tree and adds up
+file sizes (roughly a minute per ~50k files):
+
+```bash
+uv run ucloud files du                  # total per drive
+uv run ucloud files du /959294 -d 2     # subfolders two levels deep, largest first
+```
+
+The workspace's overall storage allocation and usage is in `ucloud quota`.
+
 ## Upload and download
 
 Transfer files or whole directory trees. Many files move in parallel, and a

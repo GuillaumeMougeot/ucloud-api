@@ -9,8 +9,9 @@ job's ``resources`` as a ``file`` entry (see the docs, or ``jobs create --mount`
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
 from typing import Any
 
 from .client import UCloudClient, iter_browse
@@ -46,6 +47,18 @@ class FileEntry:
     @property
     def is_dir(self) -> bool:
         return self.type == "DIRECTORY"
+
+
+@dataclass(slots=True)
+class DirUsage:
+    """Recursive totals for one folder, as computed by :meth:`Files.disk_usage`."""
+
+    path: str
+    depth: int  # 0 for the folder `disk_usage` was called on
+    size: int = 0  # bytes of every file at or below this folder
+    files: int = 0
+    dirs: int = 0
+    errors: list[str] = field(default_factory=list)  # subfolders that could not be listed
 
 
 class Files:
@@ -114,6 +127,63 @@ class Files:
                 yield from self.walk_files(entry.path)
             elif entry.type == "FILE":
                 yield entry
+
+    def disk_usage(
+        self,
+        path: str,
+        *,
+        workers: int = 16,
+        on_dir: Callable[[int], None] | None = None,
+    ) -> dict[str, DirUsage]:
+        """Total file sizes under every folder below ``path``, like ``du``.
+
+        UCloud's provider does not report ``sizeIncludingChildrenInBytes``, so this lists
+        every folder (concurrently, ``workers`` at a time) and adds up file sizes. Returns
+        one :class:`DirUsage` per folder, keyed by path, with totals that include
+        everything below it. ``on_dir`` is called with the running count of folders listed.
+        Folders that fail to list are recorded in the root's ``errors`` and skipped; a
+        failure on ``path`` itself is raised.
+        """
+        root = path.rstrip("/") or "/"
+        usage: dict[str, DirUsage] = {root: DirUsage(root, 0)}
+        parents: dict[str, str] = {}
+        listed = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            pending: dict[Future[list[FileEntry]], str] = {pool.submit(self.list_path, root): root}
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    folder = pending.pop(fut)
+                    try:
+                        entries = fut.result()
+                    except APIError as exc:
+                        if folder == root:
+                            raise
+                        usage[root].errors.append(f"{folder}: {exc}")
+                        continue
+                    node = usage[folder]
+                    for entry in entries:
+                        if entry.is_dir:
+                            child = entry.path.rstrip("/")
+                            usage[child] = DirUsage(child, node.depth + 1)
+                            parents[child] = folder
+                            node.dirs += 1
+                            pending[pool.submit(self.list_path, child)] = child
+                        elif entry.type == "FILE":
+                            node.size += entry.size or 0
+                            node.files += 1
+                    listed += 1
+                    if on_dir is not None:
+                        on_dir(listed)
+        # Roll each folder's totals into its parent, deepest first.
+        for node in sorted(usage.values(), key=lambda u: u.depth, reverse=True):
+            parent = parents.get(node.path)
+            if parent is not None:
+                up = usage[parent]
+                up.size += node.size
+                up.files += node.files
+                up.dirs += node.dirs
+        return usage
 
     def mkdir(self, path: str, *, conflict_policy: str = "RENAME") -> None:
         """Create a folder at ``path``."""

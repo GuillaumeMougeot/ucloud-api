@@ -268,6 +268,18 @@ uv run ucloud files ls /12347837
 uv run ucloud files ls /12347837/project
 ```
 
+## `ucloud files du [path]`
+
+Show how much space folders use, like `du`. UCloud does not report folder sizes,
+so this walks the tree (listing `-j` folders in parallel) and adds up file sizes —
+expect about a minute per ~50k files. With no path, it totals every drive.
+
+```bash
+uv run ucloud files du                       # one row per drive
+uv run ucloud files du /12347837             # immediate subfolders, largest first
+uv run ucloud files du /12347837/repos -d 2  # two levels deep
+```
+
 ## `ucloud files upload <local> <remote>`
 
 Upload a file or directory tree (many files in parallel).

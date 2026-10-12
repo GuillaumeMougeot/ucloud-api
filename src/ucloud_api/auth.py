@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import threading
 import time
 from pathlib import Path
 from typing import cast
@@ -73,13 +74,20 @@ class Authenticator:
         self._cache_path = cache_path if cache_path is not None else token_cache_path()
         self._access_token: str | None = None
         self._expires_at: float = 0.0
+        # Concurrent callers (e.g. `files du` walking folders on a thread pool) must not each
+        # refresh at once and interleave writes to the token cache file.
+        self._lock = threading.Lock()
         self._load_cache()
 
     def access_token(self, *, force: bool = False) -> str:
         """Return a valid access token, refreshing it if necessary."""
         if not force and self._access_token and time.time() < self._expires_at:
             return self._access_token
-        return self._refresh()
+        with self._lock:
+            # Another thread may have refreshed while we waited for the lock.
+            if not force and self._access_token and time.time() < self._expires_at:
+                return self._access_token
+            return self._refresh()
 
     def username(self) -> str | None:
         """The authenticated user's username (the access token's ``sub`` claim)."""

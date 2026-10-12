@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ucloud_api.cli import _apply_mounts
+from ucloud_api.exceptions import APIError
 from ucloud_api.files import Files
 from ucloud_api.models import ComputeProduct, JobSpecification, NameAndVersion
 
@@ -112,3 +115,43 @@ def test_walk_files_does_not_truncate_large_directories() -> None:
 def test_list_drives_reads_every_page() -> None:
     items = [{"id": str(i), "specification": {"title": f"d{i}"}} for i in range(300)]
     assert len(Files(_PagedClient(items, 250)).list_drives()) == 300  # type: ignore[arg-type]
+
+
+class _TreeClient:
+    """Serves `browse` for an in-memory tree; folders in `broken` answer 403."""
+
+    def __init__(self, tree: dict[str, list[tuple[str, str, int]]], broken=()) -> None:
+        self._tree, self._broken = tree, set(broken)
+
+    def get(self, path, params=None):
+        folder = (params or {})["path"]
+        if folder in self._broken:
+            raise APIError("forbidden", status_code=403)
+        return {
+            "items": [
+                {"id": f"{folder}/{name}", "status": {"type": kind, "sizeInBytes": size}}
+                for name, kind, size in self._tree[folder]
+            ]
+        }
+
+
+_TREE = {
+    "/1": [("a", "DIRECTORY", 0), ("top.bin", "FILE", 5)],
+    "/1/a": [("b", "DIRECTORY", 0), ("x", "FILE", 10), ("link", "SOFT_LINK", 99)],
+    "/1/a/b": [("y", "FILE", 100), ("z", "FILE", 1000)],
+}
+
+
+def test_disk_usage_rolls_sizes_up_to_every_ancestor() -> None:
+    usage = Files(_TreeClient(_TREE)).disk_usage("/1/", workers=4)  # type: ignore[arg-type]
+    assert usage["/1"].size == 1115 and usage["/1"].files == 4 and usage["/1"].dirs == 2
+    assert usage["/1/a"].size == 1110 and usage["/1/a"].files == 3 and usage["/1/a"].depth == 1
+    assert usage["/1/a/b"].size == 1100 and usage["/1/a/b"].depth == 2
+
+
+def test_disk_usage_skips_unreadable_subfolders_but_raises_on_root() -> None:
+    usage = Files(_TreeClient(_TREE, broken={"/1/a/b"})).disk_usage("/1")  # type: ignore[arg-type]
+    assert usage["/1"].size == 15
+    assert usage["/1"].errors and usage["/1"].errors[0].startswith("/1/a/b:")
+    with pytest.raises(APIError):
+        Files(_TreeClient(_TREE, broken={"/1"})).disk_usage("/1")  # type: ignore[arg-type]
