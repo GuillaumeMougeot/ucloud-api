@@ -270,14 +270,37 @@ uv run ucloud files ls /12347837/project
 
 ## `ucloud files du [path]`
 
-Show how much space folders use, like `du`. UCloud does not report folder sizes,
-so this walks the tree (listing `-j` folders in parallel) and adds up file sizes —
-expect about a minute per ~50k files. With no path, it totals every drive.
+Show how much space folders use, like `du`. Sizes come from the provider's
+storage index (the same one behind the web UI's usage view), so the answer is
+instant however large the folder. With no path, it totals every drive.
+
+The index is refreshed in the background and can lag recent writes by some
+hours; the footer says when the folder was last refreshed. A subfolder created
+or moved in since then is not in the index yet: it is listed as `skipped`.
+`--walk` counts live instead: it lists every folder (`-j` in parallel) and adds
+up file sizes — exact, but about a minute per ~50k files. Drives whose provider
+keeps no index are walked automatically.
 
 ```bash
 uv run ucloud files du                       # one row per drive
-uv run ucloud files du /12347837             # immediate subfolders, largest first
-uv run ucloud files du /12347837/repos -d 2  # two levels deep
+uv run ucloud files du /12345                # immediate subfolders, largest first
+uv run ucloud files du /12345/project -d 2   # two levels deep
+uv run ucloud files du /12345/project --walk # live count, with file counts per folder
+```
+
+## `ucloud files ncdu [path]`
+
+Browse folder sizes interactively, like `ncdu`: folders and files sorted largest
+first, with their share of the current folder. Each folder you open is one
+request to the storage index, so drilling down is instant. Without a path, it
+asks which drive to start in.
+
+Keys: `↑`/`↓` (or `j`/`k`) move, `→`/`Enter` open, `←`/`Backspace` go up,
+`s` sort by name or size, `r` reload, `q` quit. Folders not in the index yet
+show `?`. Needs a terminal with curses (Linux, macOS).
+
+```bash
+uv run ucloud files ncdu /12345
 ```
 
 ## `ucloud files upload <local> <remote>`

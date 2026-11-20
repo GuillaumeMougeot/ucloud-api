@@ -8,6 +8,7 @@ import sys
 import time
 import tomllib
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, NoReturn
@@ -30,7 +31,7 @@ from .catalog import AppSummary, Catalog
 from .client import UCloudClient, iter_browse
 from .config import DEFAULT_BASE_URL, Credentials, credentials_path, load_credentials
 from .exceptions import APIError, AuthError, UCloudError
-from .files import DirUsage, Files
+from .files import DirUsage, Drive, Files, IndexSummary
 from .jobqueue import Queue, QueueRecord, QueueStatus, Scheduler
 from .jobs import Jobs, SSHKeys, specification_to_spec_dict
 from .launch import Launcher, run_log_path, working_tree_selector
@@ -615,7 +616,7 @@ def files_ls(
 ) -> None:
     """List the contents of a UCloud folder."""
     with _client() as client, _friendly_errors():
-        entries = Files(client).list_path(path)
+        entries = Files(client).list_path(path, sizes=True)
     if not entries:
         console.print(f"[yellow]Empty or not found:[/] {path}")
         return
@@ -624,7 +625,7 @@ def files_ls(
         table.add_row(
             "dir" if e.is_dir else "file",
             e.name + ("/" if e.is_dir else ""),
-            _format_size(e.size) if not e.is_dir else "",
+            _format_size(e.total_size if e.is_dir else e.size),
             _format_timestamp(e.modified_at),
         )
     console.print(table)
@@ -641,10 +642,20 @@ def files_du(
         int, typer.Option("--max-depth", "-d", help="Show folders down to this depth.")
     ] = 1,
     workers: Annotated[int, typer.Option("--jobs", "-j", help="Folders listed in parallel.")] = 16,
+    walk: Annotated[
+        bool,
+        typer.Option(
+            "--walk",
+            help="Count live by walking the whole tree (slow) instead of reading the "
+            "provider's storage index, which can lag recent writes by some hours.",
+        ),
+    ] = False,
 ) -> None:
-    """Show how much space folders use, like `du` (walks the tree; large ones take a while)."""
+    """Show how much space folders use, like `du` (instant from the storage index)."""
     with _client() as client, _friendly_errors():
         files = Files(client)
+        if not walk and _du_from_index(files, path, max_depth, workers):
+            return
         if path is None:
             targets = [(d.path, d.title) for d in files.list_drives()]
             max_depth = 0
@@ -693,6 +704,99 @@ def files_du(
         console.print(f"Total: [bold]{_format_size(total)}[/] across {len(rows)} drive(s)")
     for err in errors:
         err_console.print(f"[yellow]skipped[/] {err}")
+
+
+def _du_from_index(files: Files, path: str | None, max_depth: int, workers: int) -> bool:
+    """Print `files du` from the provider's storage index; False if it has none for `path`."""
+    if path is None:
+        drives = files.list_drives()
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            roots = list(pool.map(lambda d: files.stat(d.path, sizes=True), drives))
+        sizes = [r.total_size if r is not None else None for r in roots]
+        if None in sizes:  # some drive has no index: count them all by walking
+            return False
+        table = Table("Size", "Path", "Title")
+        for size, d in sorted(zip(sizes, drives, strict=True), key=lambda p: -(p[0] or 0)):
+            table.add_row(_format_size(size), d.path, d.title)
+        console.print(table)
+        total = sum(s or 0 for s in sizes)
+        console.print(f"Total: [bold]{_format_size(total)}[/] across {len(drives)} drive(s)")
+        console.print("[dim]From the storage index (can lag recent writes); --walk counts live.[/]")
+        return True
+
+    with console.status("Reading the storage index …"):
+        usage = files.indexed_usage(path, max_depth=max_depth, workers=workers)
+        summary = files.visualize(path) if usage is not None else None
+    if usage is None:
+        return False
+    table = Table("Size", "Path")
+    for u in sorted(usage.values(), key=lambda u: u.size, reverse=True):
+        table.add_row(
+            _format_size(u.size), u.path + ("/" if u.depth else ""), style="" if u.depth else "bold"
+        )
+    console.print(table)
+    console.print(f"[dim]{_index_note(summary)}[/]")
+    for err in usage[path.rstrip("/") or "/"].errors:
+        err_console.print(f"[yellow]skipped[/] {err} (measure it with --walk)")
+    return True
+
+
+def _index_note(summary: IndexSummary | None, live: str = "--walk") -> str:
+    """One line saying what the storage index holds for a folder and how fresh it is."""
+    note = "From the storage index"
+    if summary is not None:
+        note += f": {summary.files:,} files, {summary.dirs:,} folders"
+        if summary.updated_at:
+            note += f", updated {_format_timestamp(summary.updated_at)}"
+    return note + f" (can lag recent writes; {live} counts live)."
+
+
+@files_app.command("ncdu")
+def files_ncdu(
+    path: Annotated[
+        str | None,
+        typer.Argument(help="Folder to start in, e.g. /12345/project (default: pick a drive)."),
+    ] = None,
+) -> None:
+    """Browse folder sizes interactively, like `ncdu` (from the storage index)."""
+    from .ncdu import Browser, run
+
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        _fail("`files ncdu` needs an interactive terminal; use `files du` in scripts.")
+    with _client() as client, _friendly_errors():
+        files = Files(client)
+        if path is None:
+            drives = files.list_drives()
+            if not drives:
+                _fail("No drives found.")
+            path = drives[0].path if len(drives) == 1 else _pick_drive_path(drives)
+        root = files.stat(path, sizes=True)
+        if root is None:
+            _fail(f"Not found: {path}")
+        if not root.is_dir:
+            _fail(f"{path} is a file ({_format_size(root.size)}).")
+        if root.total_size is None:
+            _fail(
+                "This drive's provider reports no folder sizes (no storage index). "
+                f"Use `ucloud files du {path} --walk` to count them."
+            )
+        summary = files.visualize(path)
+        browser = Browser(load=lambda p: files.list_path(p, sizes=True), path=path)
+        try:
+            run(browser, _format_size, footer=" " + _index_note(summary, "`files du --walk`"))
+        except ImportError:
+            _fail("`files ncdu` needs curses (not available on Windows); use `files du`.")
+
+
+def _pick_drive_path(drives: list[Drive]) -> str:
+    table = Table("#", "Path", "Title")
+    for i, d in enumerate(drives, 1):
+        table.add_row(str(i), d.path, d.title)
+    console.print(table)
+    choice: int = typer.prompt("Drive number", type=int, default=1)
+    if not 1 <= choice <= len(drives):
+        _fail(f"Pick a number between 1 and {len(drives)}.")
+    return drives[choice - 1].path
 
 
 def _transfer_progress() -> Progress:

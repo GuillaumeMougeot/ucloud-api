@@ -53,13 +53,20 @@ uv run ucloud files ls /959294/project
 
 ## See what takes up space
 
-Folder sizes aren't reported by UCloud, so `files du` walks the tree and adds up
-file sizes (roughly a minute per ~50k files):
+The provider keeps a storage index with every folder's total size (the web UI's
+usage view reads it), so `files du`, `files ncdu` and the sizes in `files ls`
+answer instantly:
 
 ```bash
 uv run ucloud files du                  # total per drive
 uv run ucloud files du /959294 -d 2     # subfolders two levels deep, largest first
+uv run ucloud files ncdu /959294        # drill down interactively, like ncdu
 ```
+
+The index is refreshed in the background, so it can lag recent writes by some
+hours (`files du` prints when it was last refreshed, and lists folders not
+indexed yet as skipped). For an exact, live count add `--walk`: it lists every
+folder and adds up file sizes (roughly a minute per ~50k files).
 
 The workspace's overall storage allocation and usage is in `ucloud quota`.
 

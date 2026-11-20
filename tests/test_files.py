@@ -155,3 +155,112 @@ def test_disk_usage_skips_unreadable_subfolders_but_raises_on_root() -> None:
     assert usage["/1"].errors and usage["/1"].errors[0].startswith("/1/a/b:")
     with pytest.raises(APIError):
         Files(_TreeClient(_TREE, broken={"/1"})).disk_usage("/1")  # type: ignore[arg-type]
+
+
+class _IndexedClient:
+    """Serves browse/retrieve with `sizeIncludingChildrenInBytes` and `visualize`, like a
+    provider with a storage index. Folders in `unindexed` have no size yet."""
+
+    def __init__(self, tree, totals, unindexed=(), visualize=None) -> None:
+        self._tree, self._totals, self._unindexed = tree, totals, set(unindexed)
+        self._visualize = visualize
+        self.calls: list[tuple[str, dict]] = []
+
+    def _status(self, path: str, kind: str, size: int) -> dict:
+        status = {"type": kind, "sizeInBytes": size}
+        if kind == "DIRECTORY":
+            indexed = path not in self._unindexed
+            status["sizeIncludingChildrenInBytes"] = self._totals.get(path) if indexed else None
+        return status
+
+    def get(self, path, params=None):
+        params = dict(params or {})
+        self.calls.append((path, params))
+        if path.endswith("/retrieve"):
+            target = params["id"]
+            return {"id": target, "status": self._status(target, "DIRECTORY", 0)}
+        folder = params["path"]
+        return {
+            "items": [
+                {"id": f"{folder}/{n}", "status": self._status(f"{folder}/{n}", k, s)}
+                for n, k, s in self._tree[folder]
+            ]
+        }
+
+    def post(self, path, json=None):
+        assert path == "/api/files/visualize"
+        if isinstance(self._visualize, Exception):
+            raise self._visualize
+        return self._visualize
+
+
+_TOTALS = {"/1": 1115, "/1/a": 1110, "/1/a/b": 1100}
+
+
+def test_list_path_reads_indexed_folder_sizes_when_asked() -> None:
+    client = _IndexedClient(_TREE, _TOTALS)
+    entries = Files(client).list_path("/1", sizes=True)  # type: ignore[arg-type]
+    assert client.calls[0][1]["includeSizes"] == "true"
+    assert entries[0].name == "a" and entries[0].total_size == 1110
+    assert entries[1].name == "top.bin" and entries[1].total_size is None
+    Files(client).list_path("/1")  # type: ignore[arg-type]
+    assert "includeSizes" not in client.calls[1][1]
+
+
+def test_indexed_usage_lists_only_down_to_max_depth() -> None:
+    client = _IndexedClient(_TREE, _TOTALS)
+    usage = Files(client).indexed_usage("/1/", max_depth=1)  # type: ignore[arg-type]
+    assert usage is not None
+    assert {p: (u.size, u.depth) for p, u in usage.items()} == {"/1": (1115, 0), "/1/a": (1110, 1)}
+    browsed = [p["path"] for path, p in client.calls if path.endswith("/browse")]
+    assert browsed == ["/1"]  # one listing, not a walk of the tree
+
+    usage = Files(_IndexedClient(_TREE, _TOTALS)).indexed_usage("/1", max_depth=2)  # type: ignore[arg-type]
+    assert usage is not None and usage["/1/a/b"].size == 1100 and usage["/1/a/b"].depth == 2
+
+
+def test_indexed_usage_names_folders_missing_from_the_index() -> None:
+    client = _IndexedClient(_TREE, _TOTALS, unindexed={"/1/a"})
+    usage = Files(client).indexed_usage("/1", max_depth=2)  # type: ignore[arg-type]
+    assert usage is not None and set(usage) == {"/1"}
+    assert usage["/1"].errors == ["/1/a: not in the storage index yet"]
+
+
+def test_indexed_usage_is_none_without_an_index() -> None:
+    client = _IndexedClient(_TREE, _TOTALS, unindexed={"/1"})
+    assert Files(client).indexed_usage("/1") is None  # type: ignore[arg-type]
+
+
+_VISUALIZE = {
+    "entries": [
+        {"path": "/1", "type": "DIRECTORY", "sizeInBytes": 1115},
+        {"path": "/1/a", "type": "DIRECTORY", "sizeInBytes": 1110},
+        {"path": "/1/a/b/z", "type": "FILE", "sizeInBytes": 1000},
+    ],
+    "lastUpdatedAt": 1784214840000,
+    "fileCount": 4,
+    "directoryCount": 2,
+    "complete": True,
+    "indexing": False,
+}
+
+
+def test_visualize_parses_the_index_summary() -> None:
+    summary = Files(_IndexedClient(_TREE, _TOTALS, visualize=_VISUALIZE)).visualize("/1")  # type: ignore[arg-type]
+    assert summary is not None
+    assert (summary.path, summary.size, summary.files, summary.dirs) == ("/1", 1115, 4, 2)
+    assert summary.updated_at == 1784214840000 and summary.complete
+    largest = [(e.name, e.is_dir, e.size) for e in summary.largest]
+    assert largest == [("a", True, 1110), ("z", False, 1000)]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        APIError("storage visualization is not supported", status_code=404),
+        {"entries": [], "indexing": True, "complete": False},
+    ],
+)
+def test_visualize_is_none_when_unsupported_or_still_indexing(answer) -> None:
+    files = Files(_IndexedClient(_TREE, _TOTALS, visualize=answer))  # type: ignore[arg-type]
+    assert files.visualize("/1") is None
